@@ -195,12 +195,29 @@ def publish(message: str, link: str) -> str:
     return data["id"]
 
 
+def log_token_expiry() -> None:
+    """Afișează în log când expiră tokenul Paginii (0 = nu expiră)."""
+    try:
+        r = requests.get(
+            f"https://graph.facebook.com/{GRAPH_VERSION}/debug_token",
+            params={"input_token": PAGE_TOKEN, "access_token": PAGE_TOKEN}, timeout=20,
+        ).json().get("data", {})
+        exp = r.get("expires_at")
+        when = "nu expiră" if exp == 0 else time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(exp)) if exp else "necunoscut"
+        log(f"Token Pagină: tip={r.get('type')}, valid={r.get('is_valid')}, expiră: {when}")
+    except Exception as exc:
+        log(f"Nu am putut verifica tokenul: {exc}")
+
+
 # ---------- main ----------
 
 def main() -> int:
     if not DRY_RUN and not PAGE_TOKEN:
         log("Lipsește FB_PAGE_TOKEN (sau rulează cu DRY_RUN=1).")
         return 1
+
+    if PAGE_TOKEN:
+        log_token_expiry()
 
     feeds = json.loads(FEEDS_FILE.read_text(encoding="utf-8"))
     posted = load_state()
