@@ -10,7 +10,8 @@ La fiecare rulare:
 
 Variabile de mediu:
   FB_PAGE_ID        ID-ul Paginii (implicit "me" = Pagina tokenului)
-  FB_PAGE_TOKEN     Page Access Token (SECRET)
+  FB_PAGE_TOKEN     token de Pagină SAU token de utilizator de lungă durată (SECRET)
+  FB_PAGE_NAME      o parte din numele Paginii (implicit „finan”)
   GEMINI_API_KEY    cheia Gemini (SECRET)
   GEMINI_MODEL      implicit gemini-2.5-flash
   GRAPH_VERSION     implicit v24.0
@@ -39,6 +40,7 @@ STATE_FILE = BASE / "posted.json"
 
 PAGE_ID = os.getenv("FB_PAGE_ID", "me")  # cu un Page token, "me" = Pagina
 PAGE_TOKEN = os.getenv("FB_PAGE_TOKEN", "")
+PAGE_NAME = os.getenv("FB_PAGE_NAME", "finan")  # o parte din numele Paginii
 GEMINI_KEY = os.getenv("GEMINI_API_KEY", "")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 GRAPH_VERSION = os.getenv("GRAPH_VERSION", "v24.0")
@@ -206,18 +208,49 @@ def publish(message: str, link: str) -> str:
     return data["id"]
 
 
-def log_token_expiry() -> None:
-    """Afișează în log când expiră tokenul Paginii (0 = nu expiră)."""
+def _debug(token: str) -> dict:
+    return requests.get(
+        f"https://graph.facebook.com/{GRAPH_VERSION}/debug_token",
+        params={"input_token": token, "access_token": token}, timeout=20,
+    ).json().get("data", {})
+
+
+def _fmt_exp(exp) -> str:
+    if exp == 0:
+        return "nu expiră"
+    if not exp:
+        return "necunoscut"
+    days = (exp - time.time()) / 86400
+    return time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(exp)) + f" (peste {days:.0f} zile)"
+
+
+def resolve_page_token() -> str:
+    """Acceptă fie un token de Pagină, fie un token de utilizator de lungă durată.
+    Din tokenul de utilizator obține tokenul Paginii (care, derivat dintr-un token lung, nu expiră)."""
+    global PAGE_TOKEN
     try:
-        r = requests.get(
-            f"https://graph.facebook.com/{GRAPH_VERSION}/debug_token",
-            params={"input_token": PAGE_TOKEN, "access_token": PAGE_TOKEN}, timeout=20,
-        ).json().get("data", {})
-        exp = r.get("expires_at")
-        when = "nu expiră" if exp == 0 else time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(exp)) if exp else "necunoscut"
-        log(f"Token Pagină: tip={r.get('type')}, valid={r.get('is_valid')}, expiră: {when}")
+        info = _debug(PAGE_TOKEN)
     except Exception as exc:
         log(f"Nu am putut verifica tokenul: {exc}")
+        return PAGE_TOKEN
+    log(f"Token din secret: tip={info.get('type')}, valid={info.get('is_valid')}, expiră: {_fmt_exp(info.get('expires_at'))}")
+    exp = info.get("expires_at") or 0
+    if exp and exp - time.time() < 7 * 86400:
+        log("ATENȚIE: tokenul expiră în mai puțin de 7 zile – generează unul nou.")
+    if info.get("type") != "USER":
+        return PAGE_TOKEN
+    resp = requests.get(
+        f"https://graph.facebook.com/{GRAPH_VERSION}/me/accounts",
+        params={"fields": "id,name,access_token", "access_token": PAGE_TOKEN}, timeout=20,
+    ).json()
+    pages = resp.get("data", [])
+    wanted = PAGE_NAME.lower()
+    for pg in pages:
+        if wanted in pg.get("name", "").lower():
+            log(f"Folosesc tokenul Paginii „{pg['name']}”.")
+            PAGE_TOKEN = pg["access_token"]
+            return PAGE_TOKEN
+    raise RuntimeError(f"Pagina care conține „{PAGE_NAME}” nu a fost găsită: {[p.get('name') for p in pages] or resp}")
 
 
 # ---------- main ----------
@@ -228,7 +261,7 @@ def main() -> int:
         return 1
 
     if PAGE_TOKEN:
-        log_token_expiry()
+        resolve_page_token()
 
     feeds = json.loads(FEEDS_FILE.read_text(encoding="utf-8"))
     posted = load_state()
