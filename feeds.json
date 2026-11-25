@@ -5,11 +5,6 @@
     "url": "https://www.zf.ro/rss"
   },
   {
-    "name": "Bursa.ro",
-    "category": "ro",
-    "url": "https://www.bursa.ro/rss"
-  },
-  {
     "name": "Profit.ro",
     "category": "ro",
     "url": "https://www.profit.ro/rss"
@@ -18,6 +13,46 @@
     "name": "Economica.net",
     "category": "ro",
     "url": "https://www.economica.net/feed"
+  },
+  {
+    "name": "Bursa.ro – Piața de capital",
+    "category": "ro",
+    "url": "https://www.bursa.ro/piata-capital-bursa.xml"
+  },
+  {
+    "name": "Bursa.ro – Titlurile zilei",
+    "category": "ro",
+    "url": "https://www.bursa.ro/titluri-bursa.xml"
+  },
+  {
+    "name": "Economedia",
+    "category": "ro",
+    "url": "https://economedia.ro/feed"
+  },
+  {
+    "name": "Curs de guvernare",
+    "category": "ro",
+    "url": "https://cursdeguvernare.ro/feed"
+  },
+  {
+    "name": "HotNews Economie",
+    "category": "ro",
+    "url": "https://hotnews.ro/c/economie/feed"
+  },
+  {
+    "name": "Digi24 Economie",
+    "category": "ro",
+    "url": "https://www.digi24.ro/rss/stiri/economie"
+  },
+  {
+    "name": "Mediafax Economic",
+    "category": "ro",
+    "url": "https://www.mediafax.ro/rss/economic"
+  },
+  {
+    "name": "Financial Intelligence",
+    "category": "ro",
+    "url": "https://financialintelligence.ro/feed"
   },
   {
     "name": "CNBC Markets",
@@ -33,6 +68,21 @@
     "name": "Investing.com Stocks",
     "category": "int",
     "url": "https://www.investing.com/rss/news_25.rss"
+  },
+  {
+    "name": "WSJ Markets",
+    "category": "int",
+    "url": "https://feeds.content.dowjones.io/public/rss/RSSMarketsMain"
+  },
+  {
+    "name": "CNBC Economy",
+    "category": "int",
+    "url": "https://www.cnbc.com/id/20910258/device/rss/rss.html"
+  },
+  {
+    "name": "OilPrice",
+    "category": "int",
+    "url": "https://oilprice.com/rss/main"
   },
   {
     "name": "Investing.com Forex",

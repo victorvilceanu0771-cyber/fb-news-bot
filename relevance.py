@@ -283,7 +283,8 @@ OFFICIAL_DOMAINS = ["bnr.ro", "bvb.ro", "insse.ro", "fitchratings.com", "moodys.
                     "federalreserve.gov", "asfromania.ro"]
 HIGH_REP_DOMAINS = ["zf.ro", "economedia.ro", "profit.ro", "bursa.ro", "economica.net", "g4media.ro",
                     "digi24.ro", "yahoo.com", "marketwatch.com", "dowjones.com", "cnbc.com", "investing.com",
-                    "forexlive.com", "wsj.com", "cursdeguvernare.ro"]
+                    "forexlive.com", "wsj.com", "cursdeguvernare.ro", "hotnews.ro", "mediafax.ro",
+                    "financialintelligence.ro", "oilprice.com", "wall-street.ro", "agerpres.ro"]
 
 SPECIFIC_KW = ["hidroelectrica", "romgaz", "omv petrom", "petrom", "banca transilvania", "brd", "nuclearelectrica",
                "teraplast", "transgaz", "electrica", "aquila", "purcari", "sphera", "medlife", "bittnet", "digi",
