@@ -1,6 +1,6 @@
 # Bot de știri – Pagina „Victor Vîlceanu finanțe”
 
-Publică automat știri financiare (România, piețe internaționale, forex și macro) pe Pagina de Facebook. Rulează pe GitHub Actions: în zilele lucrătoare, la fiecare 2 ore între 08:17 și 18:17 (6 postări pe zi), iar în weekend de 2 ori pe zi. Fiecare postare conține un rezumat AI scris în română și linkul către sursă.
+Publică automat știri financiare (România, piețe internaționale, forex și macro) pe Pagina de Facebook. Rulează pe GitHub Actions: verifică sursele la fiecare 5 minute, între 07:00 și 22:00. Publică cel mult 8 postări pe zi, cu o pauză de cel puțin 30 de minute între ele; știrile cu scor ≥ 85 pot sări peste pauză. Fiecare postare conține un rezumat AI scris în română și linkul către sursă.
 
 ## Fișiere
 | Fișier | Rol |

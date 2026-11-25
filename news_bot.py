@@ -20,6 +20,9 @@ Variabile de mediu:
   POSTS_PER_RUN     implicit 1
   MAX_AGE_HOURS     implicit 8
   MIN_SCORE         pragul minim de relevanță pentru publicare (implicit 60)
+  MAX_PER_DAY       maximum de postări pe zi (implicit 8)
+  MIN_GAP_MIN       pauza minimă între două postări, în minute (implicit 30)
+  URGENT_SCORE      scorul de la care o știre poate sări peste pauză (implicit 85)
   DRY_RUN           "1" = afișează postarea, nu publică nimic
 """
 
@@ -52,6 +55,9 @@ GRAPH_VERSION = os.getenv("GRAPH_VERSION", "v24.0")
 POSTS_PER_RUN = int(os.getenv("POSTS_PER_RUN", "1"))
 MAX_AGE_HOURS = float(os.getenv("MAX_AGE_HOURS", "8"))
 MIN_SCORE = int(os.getenv("MIN_SCORE", "60"))  # prag de publicare (RIDICAT)
+MAX_PER_DAY = int(os.getenv("MAX_PER_DAY", "8"))  # maximum de postări pe zi
+MIN_GAP_MIN = int(os.getenv("MIN_GAP_MIN", "30"))  # pauză minimă între postări (minute)
+URGENT_SCORE = int(os.getenv("URGENT_SCORE", "85"))  # știrile de la acest scor pot sări peste pauză
 RO_TZ_OFFSET = 2  # ora României iarna (UTC+2); vara diferența e de 1h, fără efect important
 DRY_RUN = os.getenv("DRY_RUN", "0") == "1"
 STATE_KEEP = 2000  # câte linkuri publicate păstrăm în istoric
@@ -156,6 +162,20 @@ def pick_candidates(items: list[dict]) -> list[dict]:
     return sorted(reps, key=lambda r: r["score"], reverse=True)
 
 
+def ro_today() -> str:
+    return time.strftime("%Y-%m-%d", time.gmtime(time.time() + RO_TZ_OFFSET * 3600))
+
+
+def posting_budget(posted: list[str]) -> tuple[int, float]:
+    """Câte postări mai sunt permise azi și câte minute au trecut de la ultima."""
+    stamps = [float(k[5:]) for k in posted if k.startswith("post:")]
+    today = ro_today()
+    today_count = sum(1 for t in stamps
+                      if time.strftime("%Y-%m-%d", time.gmtime(t + RO_TZ_OFFSET * 3600)) == today)
+    since_last = (time.time() - max(stamps)) / 60 if stamps else 1e9
+    return MAX_PER_DAY - today_count, since_last
+
+
 def choose(reps: list[dict], posted: list[str], n: int) -> list[dict]:
     """Reguli peste scor: prag minim, fără două postări la rând din aceeași
     categorie, cel puțin o știre românească pe zi (după ora 14)."""
@@ -163,7 +183,7 @@ def choose(reps: list[dict], posted: list[str], n: int) -> list[dict]:
     if not eligible:
         return []
     last_cat = next((k[4:] for k in reversed(posted) if k.startswith("cat:")), None)
-    today = time.strftime("%Y-%m-%d", time.gmtime(time.time() + RO_TZ_OFFSET * 3600))
+    today = ro_today()
     hour_ro = time.gmtime(time.time() + RO_TZ_OFFSET * 3600).tm_hour
     ro_done = f"ro:{today}" in posted
     chosen: list[dict] = []
@@ -308,6 +328,10 @@ def main() -> int:
 
     feeds = json.loads(FEEDS_FILE.read_text(encoding="utf-8"))
     posted = load_state()
+    left, since_last = posting_budget(posted)
+    if left <= 0 and not DRY_RUN:
+        log(f"Limita de {MAX_PER_DAY} postări pe zi a fost atinsă. Ies.")
+        return 0
     items = fetch_items(feeds, set(posted))
     reps = pick_candidates(items)
     log(f"Subiecte noi: {len(reps)} (din {len(items)} articole); prag de publicare: {MIN_SCORE}")
@@ -318,10 +342,18 @@ def main() -> int:
         top = reps[0]
         log("Motivele scorului pentru primul subiect:\n    - " + "\n    - ".join(top["reasons"]))
 
-    chosen = choose(reps, posted, POSTS_PER_RUN)
+    chosen = choose(reps, posted, min(POSTS_PER_RUN, max(left, 1) if DRY_RUN else left))
     if not chosen:
         log(f"Niciun subiect nu atinge pragul de {MIN_SCORE}. Nu public nimic la această rulare.")
         return 0
+    if since_last < MIN_GAP_MIN and not DRY_RUN:
+        urgent = [c for c in chosen if c["score"] >= URGENT_SCORE]
+        if not urgent:
+            log(f"Ultima postare a fost acum {since_last:.0f} min (pauză minimă {MIN_GAP_MIN} min); "
+                f"cel mai bun subiect are {chosen[0]['score']} < {URGENT_SCORE}. Aștept.")
+            return 0
+        log(f"Știre urgentă (scor {urgent[0]['score']} ≥ {URGENT_SCORE}) – sar peste pauza de {MIN_GAP_MIN} min.")
+        chosen = urgent[:1]
 
     errors = 0
     for p in chosen:
@@ -346,8 +378,9 @@ def main() -> int:
             for m in p["members"]:
                 posted.extend([m["key"], m["tkey"]])
             posted.append(f"cat:{p['category']}")
+            posted.append(f"post:{time.time():.0f}")
             if p["region"] in ("ro", "both"):
-                posted.append("ro:" + time.strftime("%Y-%m-%d", time.gmtime(time.time() + RO_TZ_OFFSET * 3600)))
+                posted.append("ro:" + ro_today())
         except Exception as exc:
             errors += 1
             log(f"EROARE la publicare: {exc}")
