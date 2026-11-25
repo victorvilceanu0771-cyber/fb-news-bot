@@ -237,8 +237,14 @@ _STOP = set("de la si și in în cu pe din pentru a al ale ai o un mai care ce s
             "in on for a an is are with as at by from its it after over".split())
 
 
+def _fold(text: str) -> str:
+    """Elimină diacriticele, ca „Măriuţa” și „Mariuta” să fie același cuvânt."""
+    import unicodedata
+    return "".join(c for c in unicodedata.normalize("NFKD", _norm(text)) if not unicodedata.combining(c))
+
+
 def _tokens(title: str) -> set[str]:
-    return {w for w in re.findall(rf"[{WORD_CHARS}]+", _norm(title)) if len(w) > 2 and w not in _STOP}
+    return {w for w in re.findall(r"[a-z0-9&]+", _fold(title)) if len(w) > 2 and w not in _STOP}
 
 
 def cluster_items(items: list[dict], threshold: float = 0.45) -> None:
@@ -322,7 +328,9 @@ def score_item(it: dict, now: float | None = None) -> dict:
     title, body = it.get("title", ""), it.get("summary", "")
     text = _norm(f"{title} {body}")
     dom = domain_of(it.get("link", ""))
-    tickers = extract_tickers(text)
+    title_n = _norm(title)
+    tickers_title = extract_tickers(title_n)
+    tickers = tickers_title or extract_tickers(text)  # emitenți din titlu au prioritate
 
     if any(d in dom for d in OFFICIAL_DOMAINS):
         tier, src_pts, src_reason = "official", 30, "Sursă oficială/autoritate financiară"
@@ -331,7 +339,13 @@ def score_item(it: dict, now: float | None = None) -> dict:
     else:
         tier, src_pts, src_reason = "general", 12, "Sursă media generală"
 
-    category = determine_category(text)
+    # categoria se stabilește după titlu; textul contează doar dacă titlul nu e concludent
+    category = determine_category(title_n)
+    if category == "general":
+        body_cat = determine_category(text)
+        # o companie pomenită doar în text nu face din știre una despre acea companie
+        if body_cat not in ("tech", "bvb", "equity") or tickers_title:
+            category = body_cat
     region = determine_region(text, it.get("region", "ro"))
     base = {"category": category, "region": region, "tickers": tickers}
 
@@ -343,10 +357,14 @@ def score_item(it: dict, now: float | None = None) -> dict:
     score, reasons = src_pts, [f"{src_reason} ({dom}) +{src_pts}"]
 
     # emitenți listați + eveniment corporativ
-    if tickers:
+    if tickers and not tickers_title:
+        # emitent pomenit doar în corpul știrii (ex. „venituri din Google”) – nu e subiectul știrii
+        score += 6
+        reasons.append(f"Emitent menționat doar în text: {', '.join(tickers[:3])} +6")
+    elif tickers:
         tp = 16 if len(tickers) == 1 else 18 if len(tickers) == 2 else 20
         score += tp
-        reasons.append(f"Emitenți listați: {', '.join(tickers[:3])} +{tp}")
+        reasons.append(f"Emitenți listați în titlu: {', '.join(tickers[:3])} +{tp}")
         if any_prefix(text, STRUCTURAL_STEMS):
             score += 12
             reasons.append("Eveniment corporativ structural (fuziune/listare/dividend/AGA) +12")
@@ -358,7 +376,9 @@ def score_item(it: dict, now: float | None = None) -> dict:
         score += 3
         reasons.append("Cifre concrete în titlu +3")
 
-    spec = sorted({k for k in SPECIFIC_KW if contains_word(text, k)})
+    company_names = {n for names in TICKERS.values() for n in names}
+    spec = sorted({k for k in SPECIFIC_KW
+                   if contains_word(title_n if k in company_names else text, k)})
     gen = sorted({k for k in GENERIC_KW if contains_word(text, k)})
     if len(spec) >= 2:
         kp = 30
@@ -411,7 +431,6 @@ def score_item(it: dict, now: float | None = None) -> dict:
         score -= 5
         reasons.append("Conținut scurt -5")
 
-    title_n = _norm(title)
     if any(o in title_n for o in OPINION):
         score -= 15
         reasons.append("Opinie / comentariu / rezumat de sesiune, nu știre -15")
@@ -430,6 +449,10 @@ def score_item(it: dict, now: float | None = None) -> dict:
     if not exempt and (not has_instrument or (local_fiscal and not tickers)) and final > 65:
         final = 65
         reasons.append("Plafonat la 65 (fără instrument, emitent sau autoritate)")
+
+    if category == "general" and not tickers_title and tier != "official" and final > 55:
+        final = 55
+        reasons.append("Plafonat la 55 (subiect fără categorie de piață și fără emitent în titlu)")
 
     level = "CRITIC" if final >= 80 else "RIDICAT" if final >= 60 else "MODERAT"
     return {**base, "score": final, "level": level, "reasons": reasons}

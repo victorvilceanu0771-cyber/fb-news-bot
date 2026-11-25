@@ -329,9 +329,8 @@ def main() -> int:
     for r in reps[:8]:
         extra = f" +{len(r['members']) - 1} surse" if len(r["members"]) > 1 else ""
         log(f"  [{r['score']:>3} {r['level']:<7}] {r['category']:<7} {r['region']:<6} {r['title'][:90]} ({r['source']}{extra})")
-    if reps:
-        top = reps[0]
-        log("Motivele scorului pentru primul subiect:\n    - " + "\n    - ".join(top["reasons"]))
+    for r in reps[:5]:
+        log(f"Motive [{r['score']}] {r['title'][:60]}:\n    - " + "\n    - ".join(r["reasons"]))
 
     chosen = choose(reps, posted, min(POSTS_PER_RUN, max(left, 1) if DRY_RUN else left))
     if not chosen:
