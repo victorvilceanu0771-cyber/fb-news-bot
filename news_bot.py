@@ -216,10 +216,14 @@ def main() -> int:
         try:
             posts = ask_gemini(candidates, POSTS_PER_RUN)
         except Exception as exc:
-            log(f"Gemini a eșuat ({exc}); folosesc varianta simplă.")
-            posts = fallback_posts(candidates, POSTS_PER_RUN)
-    else:
+            # fără selecția AI nu publicăm știri la întâmplare
+            log(f"Gemini a eșuat ({exc}); nu public nimic la această rulare.")
+            return 1
+    elif DRY_RUN:
         posts = fallback_posts(candidates, POSTS_PER_RUN)
+    else:
+        log("Lipsește GEMINI_API_KEY – nu public știri neselectate.")
+        return 1
 
     errors = 0
     for p in posts:

@@ -1,14 +1,57 @@
 [
-  {"name": "Ziarul Financiar", "category": "ro", "url": "https://www.zf.ro/rss"},
-  {"name": "Bursa.ro", "category": "ro", "url": "https://www.bursa.ro/rss"},
-  {"name": "Profit.ro", "category": "ro", "url": "https://www.profit.ro/rss"},
-  {"name": "Economica.net", "category": "ro", "url": "https://www.economica.net/feed"},
-  {"name": "CNBC Markets", "category": "int", "url": "https://www.cnbc.com/id/15839069/device/rss/rss.html"},
-  {"name": "MarketWatch", "category": "int", "url": "https://feeds.content.dowjones.io/public/rss/mw_topstories"},
-  {"name": "Investing.com Stocks", "category": "int", "url": "https://www.investing.com/rss/news_25.rss"},
-  {"name": "Investing.com Forex", "category": "fx", "url": "https://www.investing.com/rss/news_1.rss"},
-  {"name": "FXStreet", "category": "fx", "url": "https://www.fxstreet.com/rss/news"},
-  {"name": "ForexLive", "category": "fx", "url": "https://www.forexlive.com/feed/news"},
-  {"name": "BCE (ECB)", "category": "macro", "url": "https://www.ecb.europa.eu/rss/press.html"},
-  {"name": "Federal Reserve", "category": "macro", "url": "https://www.federalreserve.gov/feeds/press_all.xml"}
+  {
+    "name": "Ziarul Financiar",
+    "category": "ro",
+    "url": "https://www.zf.ro/rss"
+  },
+  {
+    "name": "Bursa.ro",
+    "category": "ro",
+    "url": "https://www.bursa.ro/rss"
+  },
+  {
+    "name": "Profit.ro",
+    "category": "ro",
+    "url": "https://www.profit.ro/rss"
+  },
+  {
+    "name": "Economica.net",
+    "category": "ro",
+    "url": "https://www.economica.net/feed"
+  },
+  {
+    "name": "CNBC Markets",
+    "category": "int",
+    "url": "https://www.cnbc.com/id/15839069/device/rss/rss.html"
+  },
+  {
+    "name": "MarketWatch",
+    "category": "int",
+    "url": "https://feeds.content.dowjones.io/public/rss/mw_topstories"
+  },
+  {
+    "name": "Investing.com Stocks",
+    "category": "int",
+    "url": "https://www.investing.com/rss/news_25.rss"
+  },
+  {
+    "name": "Investing.com Forex",
+    "category": "fx",
+    "url": "https://www.investing.com/rss/news_1.rss"
+  },
+  {
+    "name": "ForexLive",
+    "category": "fx",
+    "url": "https://www.forexlive.com/feed/news"
+  },
+  {
+    "name": "BCE (ECB)",
+    "category": "macro",
+    "url": "https://www.ecb.europa.eu/rss/press.html"
+  },
+  {
+    "name": "Federal Reserve",
+    "category": "macro",
+    "url": "https://www.federalreserve.gov/feeds/press_all.xml"
+  }
 ]
