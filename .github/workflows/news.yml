@@ -34,7 +34,7 @@ jobs:
 
       - name: Rulează botul
         env:
-          FB_PAGE_ID: ${{ vars.FB_PAGE_ID || '61583570934452' }}
+          FB_PAGE_ID: ${{ vars.FB_PAGE_ID || 'me' }}
           FB_PAGE_TOKEN: ${{ secrets.FB_PAGE_TOKEN }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           DRY_RUN: ${{ github.event.inputs.dry_run || '0' }}
