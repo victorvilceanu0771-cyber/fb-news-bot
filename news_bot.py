@@ -166,8 +166,19 @@ def ask_gemini(items: list[dict], n: int) -> list[dict]:
         "contents": [{"parts": [{"text": PROMPT.format(n=n, items=listing)}]}],
         "generationConfig": {"temperature": 0.4, "responseMimeType": "application/json"},
     }
-    resp = requests.post(url, headers={"x-goog-api-key": GEMINI_KEY}, json=body, timeout=60)
-    resp.raise_for_status()
+    resp = None
+    for attempt in range(3):  # Gemini mai are întârzieri ocazionale
+        try:
+            resp = requests.post(url, headers={"x-goog-api-key": GEMINI_KEY}, json=body, timeout=90)
+            if resp.status_code in (429, 500, 503) and attempt < 2:
+                raise requests.HTTPError(f"HTTP {resp.status_code}")
+            resp.raise_for_status()
+            break
+        except (requests.Timeout, requests.ConnectionError, requests.HTTPError) as exc:
+            if attempt == 2:
+                raise
+            log(f"Gemini – încercarea {attempt + 1} eșuată ({exc}), reîncerc...")
+            time.sleep(10 * (attempt + 1))
     raw = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
     raw = re.sub(r"^```(?:json)?|```$", "", raw.strip()).strip()
     picks = json.loads(raw)
