@@ -2,10 +2,9 @@ name: Stiri pe Pagina Facebook
 
 on:
   schedule:
-    # la fiecare 2 ore, 08:17–18:17 ora României (iarna, UTC+2); vara se decalează cu o oră
-    - cron: "17 6-16/2 * * 1-5"
-    # weekend: de 2 ori pe zi
-    - cron: "17 7,15 * * 0,6"
+    # verificare la fiecare 5 minute, 07:00–21:55 ora României (iarna, UTC+2); vara 08:00–22:55
+    # limitele de postare (max/zi, pauză minimă) sunt în news_bot.py
+    - cron: "*/5 5-19 * * *"
   workflow_dispatch:
     inputs:
       dry_run:
