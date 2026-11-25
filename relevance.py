@@ -315,6 +315,12 @@ OPERATIONAL_STEMS = ["raport", "rezultat", "emisiun", "obligați", "obligati", "
 OPINION = ["what i'm watching", "what i am watching", "my take", "opinion", "column", "commentary",
            "editorial", "op-ed", "podcast", "newsletter", "wrap:", "session wrap", "week ahead", "explainer",
            "analiză:", "opinie", "comentariu", "punct de vedere", "how to", "should you", "is it time to"]
+ROUTINE_GOV = ["auditor", "auditorul", "audit financiar", "secretar general", "public affairs",
+               "relații publice", "relatii publice", "purtător de cuvânt", "purtator de cuvant"]
+PERSONNEL = ["numește", "numeste", "numit", "numită", "numita", "numire", "numirea", "angajează", "angajeaza",
+             "preia conducerea", "la conducerea", "appoints", "appointed", "names", "named", "hires", "hired"]
+TOP_ROLES = ["ceo", "director general", "director executiv", "președinte", "presedinte", "guvernator",
+             "chairman", "cfo", "ministru", "ministrul"]
 LOCAL_FISCAL = ["jocuri de noroc", "păcănele", "pacanele", "taxe locale", "impozit pe clădiri",
                 "impozit pe cladiri", "taxa de salubritate", "amenzi", "taxa auto"]
 FIGURES_RE = re.compile(r"\b\d+([.,]\d+)?\s*(%|mld|miliard|milioane|mil\.|euro|lei|ron|usd|\$|€|bps|puncte|"
@@ -430,6 +436,13 @@ def score_item(it: dict, now: float | None = None) -> dict:
     elif body_len <= 160:
         score -= 5
         reasons.append("Conținut scurt -5")
+
+    if any_word(title_n, ROUTINE_GOV):
+        score -= 20
+        reasons.append("Guvernanță de rutină (auditor, relații publice) -20")
+    elif any_word(title_n, PERSONNEL) and not any_word(title_n, TOP_ROLES):
+        score -= 15
+        reasons.append("Numire de personal (nu în funcție de top) -15")
 
     if any(o in title_n for o in OPINION):
         score -= 15
