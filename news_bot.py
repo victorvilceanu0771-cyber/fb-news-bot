@@ -193,7 +193,8 @@ Reguli:
 - primul rând: un titlu scurt, cu un emoji potrivit (📈 📉 🏦 💶 🛢️ 🌍);
 - 2–4 propoziții de rezumat, factuale, cu cifrele din știre, scrise cu cuvintele tale (nu copia textul sursei);
 - dacă e relevant, o propoziție despre de ce contează pentru un investitor român (BVB, EUR/RON, dobânzi) – fără speculații;
-- fără recomandări de cumpărare/vânzare, fără predicții de preț, maximum 3 hashtag-uri;
+- fără recomandări de cumpărare/vânzare, fără predicții de preț, fără formulări promoționale sau evaluative
+  („atractiv”, „oportunitate”, „potențial de randament”, „subliniază atractivitatea”); maximum 3 hashtag-uri;
 - maximum 600 de caractere; folosește DOAR informațiile de mai jos, nu inventa cifre.
 
 Răspunde STRICT în JSON: {{"text": "<postarea>"}}

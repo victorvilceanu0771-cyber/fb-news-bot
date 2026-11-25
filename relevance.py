@@ -245,6 +245,7 @@ def cluster_items(items: list[dict], threshold: float = 0.45) -> None:
     """Grupează știrile cu titluri asemănătoare și completează la fiecare
     cluster_sources (alte surse) și cluster_velocity (surse/oră)."""
     toks = [_tokens(it["title"]) for it in items]
+    tick = [set(extract_tickers(_norm(it["title"]))) for it in items]
     parent = list(range(len(items)))
 
     def find(i):
@@ -256,7 +257,11 @@ def cluster_items(items: list[dict], threshold: float = 0.45) -> None:
     for i in range(len(items)):
         for j in range(i + 1, len(items)):
             a, b = toks[i], toks[j]
-            if a and b and len(a & b) / len(a | b) >= threshold:
+            if not (a and b):
+                continue
+            sim = len(a & b) / len(a | b)
+            close_in_time = abs(items[i]["ts"] - items[j]["ts"]) < 12 * 3600
+            if sim >= threshold or (tick[i] & tick[j] and close_in_time and sim >= 0.2):
                 parent[find(i)] = find(j)
     groups: dict[int, list[int]] = {}
     for i in range(len(items)):
@@ -300,6 +305,9 @@ STRUCTURAL_STEMS = ["listat", "listare", "delist", "fuziun", "preluar", "achizi�
                     "majorar", "aga", "ipo", "debut", "ofertă publică", "merger", "acquisit", "takeover", "buyback"]
 OPERATIONAL_STEMS = ["raport", "rezultat", "emisiun", "obligați", "obligati", "contract", "oprir", "produc",
                      "conducere", "earnings", "guidance", "revenue", "results"]
+OPINION = ["what i'm watching", "what i am watching", "my take", "opinion", "column", "commentary",
+           "editorial", "op-ed", "podcast", "newsletter", "wrap:", "session wrap", "week ahead", "explainer",
+           "analiză:", "opinie", "comentariu", "punct de vedere", "how to", "should you", "is it time to"]
 LOCAL_FISCAL = ["jocuri de noroc", "păcănele", "pacanele", "taxe locale", "impozit pe clădiri",
                 "impozit pe cladiri", "taxa de salubritate", "amenzi", "taxa auto"]
 FIGURES_RE = re.compile(r"\b\d+([.,]\d+)?\s*(%|mld|miliard|milioane|mil\.|euro|lei|ron|usd|\$|€|bps|puncte|"
@@ -401,6 +409,11 @@ def score_item(it: dict, now: float | None = None) -> dict:
     elif body_len <= 160:
         score -= 5
         reasons.append("Conținut scurt -5")
+
+    title_n = _norm(title)
+    if any(o in title_n for o in OPINION):
+        score -= 15
+        reasons.append("Opinie / comentariu / rezumat de sesiune, nu știre -15")
 
     local_fiscal = any_word(text, LOCAL_FISCAL)
     if local_fiscal and not tickers and not has_specific:
