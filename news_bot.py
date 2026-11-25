@@ -177,22 +177,13 @@ def posting_budget(posted: list[str]) -> tuple[int, float]:
 
 
 def choose(reps: list[dict], posted: list[str], n: int) -> list[dict]:
-    """Reguli peste scor: prag minim, fără două postări la rând din aceeași
-    categorie, cel puțin o știre românească pe zi (după ora 14)."""
+    """Reguli peste scor: prag minim și fără două postări la rând din aceeași categorie."""
     eligible = [r for r in reps if r["score"] >= MIN_SCORE]
     if not eligible:
         return []
     last_cat = next((k[4:] for k in reversed(posted) if k.startswith("cat:")), None)
-    today = ro_today()
-    hour_ro = time.gmtime(time.time() + RO_TZ_OFFSET * 3600).tm_hour
-    ro_done = f"ro:{today}" in posted
     chosen: list[dict] = []
     pool = eligible[:]
-    if not ro_done and hour_ro >= 14:
-        ro = [r for r in pool if r["region"] in ("ro", "both")]
-        if ro:
-            log("Regulă: încă nicio știre românească azi – prioritate pentru impact RO.")
-            pool = ro + [r for r in pool if r not in ro]
     for r in pool:
         if len(chosen) >= n:
             break
@@ -379,8 +370,6 @@ def main() -> int:
                 posted.extend([m["key"], m["tkey"]])
             posted.append(f"cat:{p['category']}")
             posted.append(f"post:{time.time():.0f}")
-            if p["region"] in ("ro", "both"):
-                posted.append("ro:" + ro_today())
         except Exception as exc:
             errors += 1
             log(f"EROARE la publicare: {exc}")

@@ -47,4 +47,4 @@ Fiecare subiect primește un scor 0–100, cu motivele afișate în log:
 - **recență:** până la +10; **confirmare din 3+ surse:** +8; **viteză de propagare:** până la +15;
 - **penalizări:** conținut lipsă sau scurt, fiscalitate locală fără impact bursier; plafon de 65 dacă știrea nu are instrument, emitent sau autoritate financiară.
 
-Niveluri: **CRITIC ≥ 80**, **RIDICAT ≥ 60**, MODERAT. Se publică doar subiectele cu scor ≥ `MIN_SCORE` (implicit 60). Nu se publică două postări la rând din aceeași categorie. După ora 14, dacă nu a apărut încă nicio știre românească în ziua respectivă, una cu impact RO are prioritate.
+Niveluri: **CRITIC ≥ 80**, **RIDICAT ≥ 60**, MODERAT. Se publică doar subiectele cu scor ≥ `MIN_SCORE` (implicit 60). Nu se publică două postări la rând din aceeași categorie.
