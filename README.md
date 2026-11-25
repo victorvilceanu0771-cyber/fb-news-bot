@@ -5,7 +5,8 @@ Publică automat știri financiare (România, piețe internaționale, forex și 
 ## Fișiere
 | Fișier | Rol |
 |---|---|
-| `news_bot.py` | scriptul: RSS → filtrare → Gemini → Graph API |
+| `news_bot.py` | scriptul: RSS → grupare pe subiect → scor de relevanță → Gemini redactează → Graph API |
+| `relevance.py` | algoritmul de relevanță (port al motorului de scoring din FinAnalytix Pro) |
 | `feeds.json` | lista surselor RSS; poți adăuga sau scoate surse |
 | `posted.json` | istoricul postărilor, ca nimic să nu apară de două ori |
 | `.github/workflows/news.yml` | programarea |
@@ -35,3 +36,15 @@ Publică automat știri financiare (România, piețe internaționale, forex și 
 
 ## Notă
 Fiecare postare se încheie cu mențiunea „Informație cu caracter general, nu reprezintă recomandare de investiții.”. Scriptul îi cere lui Gemini să nu facă recomandări și să nu inventeze cifre, dar postările nu sunt verificate de un om înainte de publicare.
+
+## Algoritmul de relevanță (`relevance.py`)
+Fiecare subiect primește un scor 0–100, cu motivele afișate în log:
+- **filtre de intrare:** doar știri financiare; sunt respinse sportul, mondenul, faptele diverse și teaserele promoționale;
+- **credibilitatea sursei:** oficială 30 / financiară de reputație 22 / generală 12;
+- **emitenți listați** (BVB + mari companii globale): +16…20, plus +12 pentru eveniment structural (fuziune, listare, dividend, AGA) sau +8 pentru unul operațional (rezultate, contract, emisiune);
+- **termeni cheie** specifici (emitenți, BNR/Fed/BCE, agenții de rating, indici) sau generici: până la +30;
+- **categorie strategică** (rating, Fed/BCE, macro, BVB): până la +15;
+- **recență:** până la +10; **confirmare din 3+ surse:** +8; **viteză de propagare:** până la +15;
+- **penalizări:** conținut lipsă sau scurt, fiscalitate locală fără impact bursier; plafon de 65 dacă știrea nu are instrument, emitent sau autoritate financiară.
+
+Niveluri: **CRITIC ≥ 80**, **RIDICAT ≥ 60**, MODERAT. Se publică doar subiectele cu scor ≥ `MIN_SCORE` (implicit 60). Nu se publică două postări la rând din aceeași categorie. După ora 14, dacă nu a apărut încă nicio știre românească în ziua respectivă, una cu impact RO are prioritate.

@@ -4,7 +4,9 @@ Bot de știri financiare pentru Pagina de Facebook „Victor Vîlceanu finanțe�
 La fiecare rulare:
   1. citește fluxurile RSS din feeds.json;
   2. păstrează doar știrile noi (nepublicate și mai recente de MAX_AGE_HOURS);
-  3. cere lui Gemini să aleagă cea mai importantă știre și să scrie un rezumat în română;
+  3. grupează știrile pe subiect și le dă un scor de relevanță 0–100 (relevance.py,
+     port al motorului FinAnalytix Pro); alege cea mai bună știre peste prag,
+     cu reguli de diversitate; Gemini doar redactează postarea în română;
   4. publică pe Pagină prin Graph API (mesaj + link);
   5. salvează linkul în posted.json, ca să nu fie publicat de două ori.
 
@@ -16,7 +18,8 @@ Variabile de mediu:
   GEMINI_MODEL      implicit gemini-2.5-flash
   GRAPH_VERSION     implicit v24.0
   POSTS_PER_RUN     implicit 1
-  MAX_AGE_HOURS     implicit 6
+  MAX_AGE_HOURS     implicit 8
+  MIN_SCORE         pragul minim de relevanță pentru publicare (implicit 60)
   DRY_RUN           "1" = afișează postarea, nu publică nimic
 """
 
@@ -34,6 +37,8 @@ from pathlib import Path
 import feedparser
 import requests
 
+import relevance
+
 BASE = Path(__file__).resolve().parent
 FEEDS_FILE = BASE / "feeds.json"
 STATE_FILE = BASE / "posted.json"
@@ -45,7 +50,9 @@ GEMINI_KEY = os.getenv("GEMINI_API_KEY", "")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 GRAPH_VERSION = os.getenv("GRAPH_VERSION", "v24.0")
 POSTS_PER_RUN = int(os.getenv("POSTS_PER_RUN", "1"))
-MAX_AGE_HOURS = float(os.getenv("MAX_AGE_HOURS", "6"))
+MAX_AGE_HOURS = float(os.getenv("MAX_AGE_HOURS", "8"))
+MIN_SCORE = int(os.getenv("MIN_SCORE", "60"))  # prag de publicare (RIDICAT)
+RO_TZ_OFFSET = 2  # ora României iarna (UTC+2); vara diferența e de 1h, fără efect important
 DRY_RUN = os.getenv("DRY_RUN", "0") == "1"
 STATE_KEEP = 2000  # câte linkuri publicate păstrăm în istoric
 UA = "Mozilla/5.0 (compatible; VVFinanteNewsBot/1.0)"
@@ -114,58 +121,93 @@ def fetch_items(feeds: list[dict], seen: set[str]) -> list[dict]:
             if now - ts > MAX_AGE_HOURS * 3600:
                 continue
             key = item_key(link, title)
-            if key in seen or title_key(title) in seen:
-                continue
             items.append({
                 "key": key,
+                "tkey": title_key(title),
+                "seen": key in seen or title_key(title) in seen,
                 "source": feed["name"],
-                "category": feed.get("category", ""),
+                "region": "world" if feed.get("category") in ("int", "fx", "macro") and not feed.get("ro") else "ro",
                 "title": title,
                 "summary": clean(e.get("summary", "")),
                 "link": link,
                 "ts": ts,
             })
             count += 1
-        log(f"{feed['name']}: {count} știri noi")
-    # eliminăm dublurile de titlu între surse
-    unique, titles = [], set()
-    for it in sorted(items, key=lambda x: x["ts"], reverse=True):
-        t = it["title"].lower()[:80]
-        if t not in titles:
-            titles.add(t)
-            unique.append(it)
-    return unique
+        log(f"{feed['name']}: {count} știri în fereastra de {MAX_AGE_HOURS:g}h")
+    return items
+
+
+def pick_candidates(items: list[dict]) -> list[dict]:
+    """Grupează pe subiect, elimină subiectele deja publicate și păstrează
+    câte un reprezentant pe subiect (sursa cu cel mai bun scor)."""
+    relevance.cluster_items(items)
+    clusters: dict[int, list[dict]] = {}
+    for it in items:
+        clusters.setdefault(it["cluster_id"], []).append(it)
+    reps = []
+    for members in clusters.values():
+        if any(m["seen"] for m in members):
+            continue  # subiect deja publicat
+        for m in members:
+            m.update(relevance.score_item(m))
+        best = max(members, key=lambda m: (m["score"], len(m["summary"])))
+        best["members"] = members
+        reps.append(best)
+    return sorted(reps, key=lambda r: r["score"], reverse=True)
+
+
+def choose(reps: list[dict], posted: list[str], n: int) -> list[dict]:
+    """Reguli peste scor: prag minim, fără două postări la rând din aceeași
+    categorie, cel puțin o știre românească pe zi (după ora 14)."""
+    eligible = [r for r in reps if r["score"] >= MIN_SCORE]
+    if not eligible:
+        return []
+    last_cat = next((k[4:] for k in reversed(posted) if k.startswith("cat:")), None)
+    today = time.strftime("%Y-%m-%d", time.gmtime(time.time() + RO_TZ_OFFSET * 3600))
+    hour_ro = time.gmtime(time.time() + RO_TZ_OFFSET * 3600).tm_hour
+    ro_done = f"ro:{today}" in posted
+    chosen: list[dict] = []
+    pool = eligible[:]
+    if not ro_done and hour_ro >= 14:
+        ro = [r for r in pool if r["region"] in ("ro", "both")]
+        if ro:
+            log("Regulă: încă nicio știre românească azi – prioritate pentru impact RO.")
+            pool = ro + [r for r in pool if r not in ro]
+    for r in pool:
+        if len(chosen) >= n:
+            break
+        if r["category"] == last_cat and r["category"] != "general" and any(
+                x["category"] != last_cat for x in pool if x not in chosen and x is not r):
+            continue  # diversitate: altă categorie disponibilă peste prag
+        chosen.append(r)
+        last_cat = r["category"]
+    return chosen or eligible[:n]
 
 
 # ---------- Gemini ----------
 
 PROMPT = """Ești editorul Paginii de Facebook „Victor Vîlceanu finanțe”, a unui broker român cu 24 de ani de experiență pe piața de capital.
-Mai jos ai o listă numerotată de știri financiare recente (piața românească, piețe internaționale, forex și macro).
+Scrie O postare în limba română despre știrea de mai jos (subiectul a fost deja ales de algoritmul de relevanță).
 
-Sarcina ta:
-1. Alege cele mai relevante {n} știri pentru investitori români (impact asupra piețelor, BVB, EUR/RON, dobânzi, mari companii). Evită știrile minore, publicitare sau duplicate.
-2. Pentru fiecare, scrie o postare în limba română:
-   - primul rând: un titlu scurt, cu un emoji potrivit (📈 📉 🏦 💶 🛢️ 🌍);
-   - 2–4 propoziții de rezumat, factuale, cu cifrele din știre, scrise cu cuvintele tale (nu copia textul sursei);
-   - fără recomandări de cumpărare/vânzare, fără predicții de preț, fără hashtag-uri în exces (maximum 3);
-   - maximum 600 de caractere.
-3. Folosește DOAR informațiile din știre. Nu inventa cifre.
+Reguli:
+- primul rând: un titlu scurt, cu un emoji potrivit (📈 📉 🏦 💶 🛢️ 🌍);
+- 2–4 propoziții de rezumat, factuale, cu cifrele din știre, scrise cu cuvintele tale (nu copia textul sursei);
+- dacă e relevant, o propoziție despre de ce contează pentru un investitor român (BVB, EUR/RON, dobânzi) – fără speculații;
+- fără recomandări de cumpărare/vânzare, fără predicții de preț, maximum 3 hashtag-uri;
+- maximum 600 de caractere; folosește DOAR informațiile de mai jos, nu inventa cifre.
 
-Răspunde STRICT în JSON, fără alt text:
-[{{"index": <numărul știrii>, "text": "<postarea>"}}]
+Răspunde STRICT în JSON: {{"text": "<postarea>"}}
 
-Știri:
+Știrea (din mai multe surse, dacă există):
 {items}
 """
 
 
-def ask_gemini(items: list[dict], n: int) -> list[dict]:
-    listing = "\n".join(
-        f"{i}. [{it['source']}] {it['title']} — {it['summary']}" for i, it in enumerate(items)
-    )
+def ask_gemini(item: dict) -> str:
+    listing = "\n".join(f"- [{m['source']}] {m['title']} — {m['summary']}" for m in item.get("members", [item])[:5])
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
     body = {
-        "contents": [{"parts": [{"text": PROMPT.format(n=n, items=listing)}]}],
+        "contents": [{"parts": [{"text": PROMPT.format(items=listing)}]}],
         "generationConfig": {"temperature": 0.4, "responseMimeType": "application/json"},
     }
     resp = None
@@ -183,18 +225,18 @@ def ask_gemini(items: list[dict], n: int) -> list[dict]:
             time.sleep(10 * (attempt + 1))
     raw = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
     raw = re.sub(r"^```(?:json)?|```$", "", raw.strip()).strip()
-    picks = json.loads(raw)
-    result = []
-    for p in picks[:n]:
-        idx = int(p["index"])
-        if 0 <= idx < len(items) and p.get("text"):
-            result.append({**items[idx], "post": p["text"].strip()})
-    return result
+    data = json.loads(raw)
+    if isinstance(data, list):
+        data = data[0]
+    text = (data.get("text") or "").strip()
+    if not text:
+        raise ValueError("Gemini a întors un text gol")
+    return text
 
 
-def fallback_posts(items: list[dict], n: int) -> list[dict]:
-    """Fără Gemini sau dacă Gemini dă eroare: titlu + sursă."""
-    return [{**it, "post": f"📰 {it['title']}\n\nSursa: {it['source']}"} for it in items[:n]]
+def fallback_text(it: dict) -> str:
+    """Doar pentru DRY_RUN fără cheie Gemini."""
+    return f"📰 {it['title']}\n\nSursa: {it['source']}"
 
 
 # ---------- Facebook ----------
@@ -266,43 +308,52 @@ def main() -> int:
     feeds = json.loads(FEEDS_FILE.read_text(encoding="utf-8"))
     posted = load_state()
     items = fetch_items(feeds, set(posted))
-    log(f"Total candidați: {len(items)}")
-    if not items:
-        log("Nicio știre nouă. Ies.")
+    reps = pick_candidates(items)
+    log(f"Subiecte noi: {len(reps)} (din {len(items)} articole); prag de publicare: {MIN_SCORE}")
+    for r in reps[:8]:
+        extra = f" +{len(r['members']) - 1} surse" if len(r["members"]) > 1 else ""
+        log(f"  [{r['score']:>3} {r['level']:<7}] {r['category']:<7} {r['region']:<6} {r['title'][:90]} ({r['source']}{extra})")
+    if reps:
+        top = reps[0]
+        log("Motivele scorului pentru primul subiect:\n    - " + "\n    - ".join(top["reasons"]))
+
+    chosen = choose(reps, posted, POSTS_PER_RUN)
+    if not chosen:
+        log(f"Niciun subiect nu atinge pragul de {MIN_SCORE}. Nu public nimic la această rulare.")
         return 0
 
-    candidates = items[:40]
-    posts: list[dict]
-    if GEMINI_KEY:
-        try:
-            posts = ask_gemini(candidates, POSTS_PER_RUN)
-        except Exception as exc:
-            # fără selecția AI nu publicăm știri la întâmplare
-            log(f"Gemini a eșuat ({exc}); nu public nimic la această rulare.")
-            return 1
-    elif DRY_RUN:
-        posts = fallback_posts(candidates, POSTS_PER_RUN)
-    else:
-        log("Lipsește GEMINI_API_KEY – nu public știri neselectate.")
-        return 1
-
     errors = 0
-    for p in posts:
-        message = f"{p['post']}\n\n{DISCLAIMER}"
+    for p in chosen:
+        if GEMINI_KEY:
+            try:
+                text = ask_gemini(p)
+            except Exception as exc:
+                log(f"Gemini a eșuat ({exc}); nu public nimic la această rulare.")
+                return 1
+        elif DRY_RUN:
+            text = fallback_text(p)
+        else:
+            log("Lipsește GEMINI_API_KEY – nu public.")
+            return 1
+        message = f"{text}\n\n{DISCLAIMER}"
         if DRY_RUN:
-            log("----- DRY RUN -----\n" + message + f"\n🔗 {p['link']}\n-------------------")
+            log(f"----- DRY RUN (scor {p['score']}, {p['level']}) -----\n{message}\n🔗 {p['link']}\n-------------------")
             continue
         try:
             post_id = publish(message, p["link"])
-            log(f"Publicat: {post_id} ← {p['title']}")
-            posted.extend([p["key"], title_key(p["title"])])
+            log(f"Publicat: {post_id} ← [{p['score']}] {p['title']}")
+            for m in p["members"]:
+                posted.extend([m["key"], m["tkey"]])
+            posted.append(f"cat:{p['category']}")
+            if p["region"] in ("ro", "both"):
+                posted.append("ro:" + time.strftime("%Y-%m-%d", time.gmtime(time.time() + RO_TZ_OFFSET * 3600)))
         except Exception as exc:
             errors += 1
             log(f"EROARE la publicare: {exc}")
 
     if not DRY_RUN:
         save_state(posted)
-    return 1 if errors and errors == len(posts) else 0
+    return 1 if errors and errors == len(chosen) else 0
 
 
 if __name__ == "__main__":
