@@ -9,7 +9,7 @@ La fiecare rulare:
   5. salvează linkul în posted.json, ca să nu fie publicat de două ori.
 
 Variabile de mediu:
-  FB_PAGE_ID        ID-ul Paginii (implicit 61583570934452)
+  FB_PAGE_ID        ID-ul Paginii (implicit "me" = Pagina tokenului)
   FB_PAGE_TOKEN     Page Access Token (SECRET)
   GEMINI_API_KEY    cheia Gemini (SECRET)
   GEMINI_MODEL      implicit gemini-2.5-flash
@@ -37,7 +37,7 @@ BASE = Path(__file__).resolve().parent
 FEEDS_FILE = BASE / "feeds.json"
 STATE_FILE = BASE / "posted.json"
 
-PAGE_ID = os.getenv("FB_PAGE_ID", "61583570934452")
+PAGE_ID = os.getenv("FB_PAGE_ID", "me")  # cu un Page token, "me" = Pagina
 PAGE_TOKEN = os.getenv("FB_PAGE_TOKEN", "")
 GEMINI_KEY = os.getenv("GEMINI_API_KEY", "")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
