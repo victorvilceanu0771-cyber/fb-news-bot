@@ -40,6 +40,7 @@ from pathlib import Path
 import feedparser
 import requests
 
+import extras
 import relevance
 
 BASE = Path(__file__).resolve().parent
@@ -263,6 +264,27 @@ FORBIDDEN_IN_POST = [
 ]
 
 
+def gemini_text(prompt: str) -> str:
+    """Apel Gemini generic, cu răspuns JSON {"text": ...}."""
+    if not GEMINI_KEY:
+        return "(rezumat indisponibil – lipsește cheia Gemini)"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
+    body = {"contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {"temperature": 0.3, "responseMimeType": "application/json"}}
+    for attempt in range(3):
+        try:
+            r = requests.post(url, headers={"x-goog-api-key": GEMINI_KEY}, json=body, timeout=90)
+            r.raise_for_status()
+            raw = r.json()["candidates"][0]["content"]["parts"][0]["text"]
+            data = json.loads(re.sub(r"^```(?:json)?|```$", "", raw.strip()).strip())
+            return (data[0] if isinstance(data, list) else data).get("text", "").strip()
+        except Exception:
+            if attempt == 2:
+                raise
+            time.sleep(10 * (attempt + 1))
+    return ""
+
+
 def violates_no_advice(text: str) -> list[str]:
     low = text.lower()
     whole = {"buy", "sell", "investiți", "investiti", "intrați", "intrati"}  # doar ca cuvânt întreg (nu „buyback”)
@@ -279,7 +301,10 @@ def fallback_text(it: dict) -> str:
 
 def publish(message: str, link: str) -> str:
     url = f"https://graph.facebook.com/{GRAPH_VERSION}/{PAGE_ID}/feed"
-    resp = requests.post(url, data={"message": message, "link": link, "access_token": PAGE_TOKEN}, timeout=30)
+    data = {"message": message, "access_token": PAGE_TOKEN}
+    if link:
+        data["link"] = link
+    resp = requests.post(url, data=data, timeout=30)
     data = resp.json()
     if resp.status_code != 200 or "id" not in data:
         raise RuntimeError(f"Graph API {resp.status_code}: {data.get('error', data)}")
@@ -346,8 +371,14 @@ def main() -> int:
         log(f"În afara intervalului de publicare ({ACTIVE_FROM}:00–{ACTIVE_TO}:00, ora României). Ies.")
         return 0
 
-    feeds = json.loads(FEEDS_FILE.read_text(encoding="utf-8"))
     posted = load_state()
+    force = [t for t in os.getenv("EXTRAS_FORCE", "").split(",") if t.strip()]
+    extras.run(posted, publish, gemini_text, violates_no_advice, PAGE_TOKEN, GRAPH_VERSION, log,
+               DRY_RUN, force=force or None)
+    if not DRY_RUN:
+        save_state(posted)
+
+    feeds = json.loads(FEEDS_FILE.read_text(encoding="utf-8"))
     left, since_last = posting_budget(posted)
     if left <= 0 and not DRY_RUN:
         log(f"Limita de {MAX_PER_DAY} postări pe zi a fost atinsă. Ies.")
@@ -406,6 +437,9 @@ def main() -> int:
                 posted.extend([m["key"], m["tkey"]])
             posted.append(f"cat:{p['category']}")
             posted.append(f"post:{time.time():.0f}")
+            extras.append_log({"ts": time.time(), "kind": "news", "title": p["title"], "score": p["score"],
+                               "category": p["category"], "region": p["region"], "link": p["link"],
+                               "post_id": post_id})
         except Exception as exc:
             errors += 1
             log(f"EROARE la publicare: {exc}")
