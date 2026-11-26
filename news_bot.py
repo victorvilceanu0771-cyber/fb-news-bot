@@ -30,6 +30,8 @@ from __future__ import annotations
 
 import calendar
 import hashlib
+from datetime import datetime
+from zoneinfo import ZoneInfo
 import json
 import os
 import re
@@ -60,7 +62,8 @@ MAX_PER_DAY = int(os.getenv("MAX_PER_DAY", "8"))  # maximum de postări pe zi
 MIN_GAP_MIN = int(os.getenv("MIN_GAP_MIN", "30"))  # pauză minimă între postări (minute)
 URGENT_SCORE = int(os.getenv("URGENT_SCORE", "85"))
 ACTIVE_FROM, ACTIVE_TO = 7, 22  # publicăm doar între 07:00 și 22:00, ora României
-RO_TZ_OFFSET = 2  # ora României iarna (UTC+2); vara diferența e de 1h, fără efect important
+RO_TZ = ZoneInfo("Europe/Bucharest")  # ora oficială a României, cu trecerea la ora de vară
+POSTED_SIMILARITY = 0.45  # cât de asemănător cu o știre deja publicată (48h) ca să fie considerat același subiect
 DRY_RUN = os.getenv("DRY_RUN", "0").strip().lower() not in ("0", "", "false", "no", "nu")  # orice altă valoare = test
 STATE_KEEP = 2000  # câte linkuri publicate păstrăm în istoric
 UA = "Mozilla/5.0 (compatible; VVFinanteNewsBot/1.0)"
@@ -125,7 +128,7 @@ def fetch_items(feeds: list[dict], seen: set[str]) -> list[dict]:
             if not title or not link:
                 continue
             ts_struct = e.get("published_parsed") or e.get("updated_parsed")
-            ts = calendar.timegm(ts_struct) if ts_struct else now
+            ts = min(calendar.timegm(ts_struct), now) if ts_struct else now
             if now - ts > MAX_AGE_HOURS * 3600:
                 continue
             key = item_key(link, title)
@@ -145,17 +148,36 @@ def fetch_items(feeds: list[dict], seen: set[str]) -> list[dict]:
     return items
 
 
+def recently_posted_titles(hours: float = 48) -> list[set[str]]:
+    cutoff = time.time() - hours * 3600
+    return [relevance._tokens(e["title"]) for e in extras.load_log()
+            if e.get("kind") == "news" and e.get("ts", 0) >= cutoff and e.get("title")]
+
+
+def already_covered(title: str, posted_tokens: list[set[str]]) -> bool:
+    t = relevance._tokens(title)
+    if not t:
+        return False
+    for p in posted_tokens:
+        if p and len(t & p) / len(t | p) >= POSTED_SIMILARITY:
+            return True
+    return False
+
+
 def pick_candidates(items: list[dict]) -> list[dict]:
     """Grupează pe subiect, elimină subiectele deja publicate și păstrează
     câte un reprezentant pe subiect (sursa cu cel mai bun scor)."""
     relevance.cluster_items(items)
+    posted_tokens = recently_posted_titles()
     clusters: dict[int, list[dict]] = {}
     for it in items:
         clusters.setdefault(it["cluster_id"], []).append(it)
     reps = []
     for members in clusters.values():
         if any(m["seen"] for m in members):
-            continue  # subiect deja publicat
+            continue  # subiect deja publicat sau respins
+        if any(already_covered(m["title"], posted_tokens) for m in members):
+            continue  # același subiect a fost publicat în ultimele 48h (din altă sursă)
         for m in members:
             m.update(relevance.score_item(m))
         best = max(members, key=lambda m: (m["score"], len(m["summary"])))
@@ -164,16 +186,19 @@ def pick_candidates(items: list[dict]) -> list[dict]:
     return sorted(reps, key=lambda r: r["score"], reverse=True)
 
 
+def ro_dt(ts: float | None = None) -> datetime:
+    return datetime.fromtimestamp(time.time() if ts is None else ts, RO_TZ)
+
+
 def ro_today() -> str:
-    return time.strftime("%Y-%m-%d", time.gmtime(time.time() + RO_TZ_OFFSET * 3600))
+    return ro_dt().strftime("%Y-%m-%d")
 
 
 def posting_budget(posted: list[str]) -> tuple[int, float]:
     """Câte postări mai sunt permise azi și câte minute au trecut de la ultima."""
     stamps = [float(k[5:]) for k in posted if k.startswith("post:")]
     today = ro_today()
-    today_count = sum(1 for t in stamps
-                      if time.strftime("%Y-%m-%d", time.gmtime(t + RO_TZ_OFFSET * 3600)) == today)
+    today_count = sum(1 for t in stamps if ro_dt(t).strftime("%Y-%m-%d") == today)
     since_last = (time.time() - max(stamps)) / 60 if stamps else 1e9
     return MAX_PER_DAY - today_count, since_last
 
@@ -338,6 +363,29 @@ def fallback_text(it: dict) -> str:
     return f"📰 {it['title']}\n\nSursa: {it['source']}"
 
 
+def write_post(p: dict) -> tuple[str, str]:
+    """Redactează postarea cu Gemini și o verifică. Întoarce (text, problemă); problemă goală = se poate publica."""
+    text = ask_gemini(p)
+    bad = violates_no_advice(text)
+    if bad:
+        log(f"Textul conține formulări de tip recomandare ({', '.join(bad)}); îl regenerez.")
+        text = ask_gemini(p, strict=True)
+        bad = violates_no_advice(text)
+        if bad:
+            return text, f"formulări de tip recomandare ({', '.join(bad)})"
+    src = source_text(p)
+    wrong = unverified_numbers(text, src)
+    if wrong:
+        log(f"Cifre care nu apar în sursă ({', '.join(wrong)}); regenerez.")
+        text = ask_gemini(p, fix_numbers=wrong)
+        wrong = unverified_numbers(text, src) or violates_no_advice(text)
+        if wrong:
+            return text, f"textul nu se potrivește cu sursa ({', '.join(wrong)})"
+    if len(text) > 900:
+        return text, "text prea lung"
+    return text, ""
+
+
 # ---------- Facebook ----------
 
 def publish(message: str, link: str) -> str:
@@ -407,7 +455,7 @@ def main() -> int:
     if PAGE_TOKEN:
         resolve_page_token()
 
-    hour_ro = time.gmtime(time.time() + RO_TZ_OFFSET * 3600).tm_hour
+    hour_ro = ro_dt().hour
     if not (ACTIVE_FROM <= hour_ro < ACTIVE_TO) and not DRY_RUN:
         log(f"În afara intervalului de publicare ({ACTIVE_FROM}:00–{ACTIVE_TO}:00, ora României). Ies.")
         return 0
@@ -445,32 +493,29 @@ def main() -> int:
             return 0
         log(f"Știre urgentă (scor {urgent[0]['score']} ≥ {URGENT_SCORE}) – sar peste pauza de {MIN_GAP_MIN} min.")
         chosen = urgent[:1]
+        backups_ok = False
+    else:
+        backups_ok = True
 
-    errors = 0
-    for p in chosen:
+    errors = published = 0
+    floor = MIN_SCORE if backups_ok else URGENT_SCORE
+    attempts = chosen + [r for r in reps if r["score"] >= floor and r not in chosen][:2]
+    for p in attempts:
+        if published >= len(chosen):
+            break
         if GEMINI_KEY:
             try:
-                text = ask_gemini(p)
-                bad = violates_no_advice(text)
-                if bad:
-                    log(f"Textul conține formulări de tip recomandare ({', '.join(bad)}); îl regenerez.")
-                    text = ask_gemini(p, strict=True)
-                    bad = violates_no_advice(text)
-                if bad:
-                    log(f"Tot conține formulări de tip recomandare ({', '.join(bad)}); NU public.")
-                    return 0
-                src = source_text(p)
-                wrong = unverified_numbers(text, src)
-                if wrong:
-                    log(f"Cifre care nu apar în sursă ({', '.join(wrong)}); regenerez.")
-                    text = ask_gemini(p, fix_numbers=wrong)
-                    wrong = unverified_numbers(text, src) or violates_no_advice(text)
-                if wrong:
-                    log(f"Textul tot nu se potrivește cu sursa ({', '.join(wrong)}); NU public.")
-                    return 0
+                text, problem = write_post(p)
             except Exception as exc:
                 log(f"Gemini a eșuat ({exc}); nu public nimic la această rulare.")
                 return 1
+            if problem:
+                log(f"RESPINS [{p['score']}] {p['title'][:80]} – {problem}. Nu îl mai încerc; trec la următorul.")
+                if not DRY_RUN:
+                    for m in p["members"]:
+                        posted.extend([m["key"], m["tkey"]])
+                    posted.append(f"rej:{time.time():.0f}")
+                continue
         elif DRY_RUN:
             text = fallback_text(p)
         else:
@@ -479,15 +524,18 @@ def main() -> int:
         message = f"{text}\n\n{DISCLAIMER}"
         if DRY_RUN:
             log(f"----- DRY RUN (scor {p['score']}, {p['level']}) -----\n{message}\n🔗 {p['link']}\n-------------------")
+            published += 1
             continue
         try:
             post_id = publish(message, p["link"])
+            published += 1
             log(f"Publicat: {post_id} ← [{p['score']}] {p['title']}")
             for m in p["members"]:
                 posted.extend([m["key"], m["tkey"]])
             posted.append(f"cat:{p['category']}")
             posted.append(f"post:{time.time():.0f}")
-            extras.append_log({"ts": time.time(), "kind": "news", "title": p["title"], "score": p["score"],
+            extras.append_log({"ts": time.time(), "kind": "news", "title": p["title"],
+                               "headline": text.splitlines()[0].strip(), "score": p["score"],
                                "category": p["category"], "region": p["region"], "link": p["link"],
                                "post_id": post_id})
         except Exception as exc:
@@ -496,7 +544,7 @@ def main() -> int:
 
     if not DRY_RUN:
         save_state(posted)
-    return 1 if errors and errors == len(chosen) else 0
+    return 1 if errors and not published else 0
 
 
 if __name__ == "__main__":

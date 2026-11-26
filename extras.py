@@ -13,7 +13,10 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -22,13 +25,17 @@ import requests
 BASE = Path(__file__).resolve().parent
 LOG_FILE = BASE / "posts_log.json"
 UA = {"User-Agent": "Mozilla/5.0 (compatible; VVFinanteNewsBot/1.0)"}
-RO_TZ = 2
+RO_ZONE = ZoneInfo("Europe/Bucharest")  # ora oficială a României (cu ora de vară)
 DISCLAIMER = "ℹ️ Informație cu caracter general, nu reprezintă recomandare de investiții."
 ZILE = ["luni", "marți", "miercuri", "joi", "vineri", "sâmbătă", "duminică"]
 
 
 def _ro_now() -> time.struct_time:
-    return time.gmtime(time.time() + RO_TZ * 3600)
+    return datetime.now(RO_ZONE).timetuple()
+
+
+def _ro_date(ts: float) -> str:
+    return datetime.fromtimestamp(ts, RO_ZONE).strftime("%Y-%m-%d")
 
 
 def _today() -> str:
@@ -135,7 +142,7 @@ def yahoo_last(symbol: str) -> tuple[float, float, str]:
     ts = [t for t, c in zip(res["timestamp"], res["indicators"]["quote"][0]["close"]) if c is not None]
     if len(closes) < 2:
         raise RuntimeError(f"date insuficiente pentru {symbol}")
-    return closes[-1], closes[-2], time.strftime("%Y-%m-%d", time.gmtime(ts[-1] + RO_TZ * 3600))
+    return closes[-1], closes[-2], _ro_date(ts[-1])
 
 
 def bvb_post() -> str:
@@ -176,21 +183,57 @@ def bvb_post() -> str:
 
 # ------------------------------------------------------------------ recapitularea săptămânii
 
-def weekly_post(ask_gemini_text) -> str:
+def post_exists(post_id: str, page_token: str, graph_version: str) -> bool | None:
+    """True/False dacă postarea mai există pe Pagină; None dacă nu se poate verifica."""
+    if not page_token or not post_id:
+        return None
+    try:
+        d = requests.get(f"https://graph.facebook.com/{graph_version}/{post_id}",
+                         params={"fields": "id", "access_token": page_token}, timeout=20).json()
+    except Exception:
+        return None
+    if "id" in d:
+        return True
+    code = (d.get("error") or {}).get("code")
+    return False if code in (100, 803) else None
+
+
+def live_news(page_token: str, graph_version: str, days: int = 7) -> list[dict]:
+    """Știrile publicate în ultimele `days` zile care mai există pe Pagină (cele șterse sunt excluse)."""
+    since = time.time() - days * 86400
+    out = []
+    for e in load_log():
+        if e.get("ts", 0) < since or e.get("kind", "news") != "news":
+            continue
+        if post_exists(e.get("post_id", ""), page_token, graph_version) is False:
+            continue
+        out.append(e)
+    return out
+
+
+def weekly_post(ask_gemini_text, page_token: str = "", graph_version: str = "v24.0") -> str:
     week_ago = time.time() - 7 * 86400
-    items = [e for e in load_log() if e.get("ts", 0) >= week_ago and e.get("kind", "news") == "news"]
+    items = live_news(page_token, graph_version)
     if len(items) < 3:
         raise RuntimeError(f"prea puține știri publicate săptămâna aceasta ({len(items)})")
     items.sort(key=lambda e: e.get("score", 0), reverse=True)
     top = items[:6]
-    listing = "\n".join(f"- [{e.get('category')}] {e['title']}" for e in top)
+    # titlul în română al postării noastre (dacă există), altfel titlul sursei
+    heads = [_re_emoji(e.get("headline") or e["title"]) for e in top]
+    listing = "\n".join(f"- [{e.get('category')}] {h}" for e, h in zip(top, heads))
     intro = ask_gemini_text(
         "Scrie 2 propoziții în română care rezumă, factual și neutru, tema principală a săptămânii pe piețele "
-        "financiare, pe baza titlurilor de mai jos. Fără recomandări de investiții, fără predicții, fără imperative. "
+        "financiare, folosind EXCLUSIV titlurile de mai jos. Nu adăuga fapte, nume sau cifre care nu sunt în titluri; "
+        "nu folosi deloc cifre. Fără recomandări de investiții, fără predicții, fără imperative. "
         "Răspunde STRICT în JSON: {\"text\": \"...\"}\n\n" + listing)
-    lines = [f"🗓️ Săptămâna pe piețe ({time.strftime('%d.%m', time.gmtime(week_ago + RO_TZ*3600))}–"
-             f"{time.strftime('%d.%m.%Y', _ro_now())})", "", intro, "", "Cele mai importante subiecte:"]
-    lines += [f"• {e['title']}" for e in top]
+    if re.search(r"\d", intro or ""):
+        intro = ""  # din prudență: introducerea nu are voie să conțină cifre
+    start = datetime.fromtimestamp(week_ago, RO_ZONE).strftime("%d.%m")
+    lines = [f"🗓️ Săptămâna pe piețe ({start}–{time.strftime('%d.%m.%Y', _ro_now())})", ""]
+    if intro:
+        lines += [intro, ""]
+    lines.append("Cele mai importante subiecte:")
+    lines += [f"• {h}" for h in heads]
     try:
         _, now, _ = bnr_rates()
         lines += ["", f"💶 EUR/RON (BNR): {_fmt_ro(now['EUR'])} lei"]
@@ -205,8 +248,11 @@ def weekly_post(ask_gemini_text) -> str:
 def performance_report(page_token: str, graph_version: str) -> str:
     week_ago = time.time() - 7 * 86400
     items = [e for e in load_log() if e.get("ts", 0) >= week_ago and e.get("post_id")]
-    rows, by_cat = [], {}
+    rows, by_cat, deleted = [], {}, 0
     for e in items:
+        if post_exists(e["post_id"], page_token, graph_version) is False:
+            deleted += 1
+            continue
         try:
             d = requests.get(
                 f"https://graph.facebook.com/{graph_version}/{e['post_id']}",
@@ -231,6 +277,8 @@ def performance_report(page_token: str, graph_version: str) -> str:
     md += ["", "**Pe categorii** (interacțiune medie pe postare):", ""]
     for cat, (n, tot) in sorted(by_cat.items(), key=lambda kv: -kv[1][1] / max(1, kv[1][0])):
         md.append(f"- {cat}: {tot / max(1, n):.1f} ({n} postări)")
+    if deleted:
+        md += ["", f"Postări șterse între timp (excluse din calcul): {deleted}"]
     md += ["", "*Interacțiune = reacții + 2×comentarii + 3×distribuiri."]
     return "\n".join(md)
 
@@ -247,23 +295,36 @@ def open_github_issue(title: str, body: str) -> None:
 
 # ------------------------------------------------------------------ moderarea comentariilor
 
-import re as _re
+_re = re
+
+
+def _re_emoji(text: str) -> str:
+    """Scoate emoji-urile de la începutul titlului."""
+    return re.sub(r"^[^\wĂÂÎȘȚăâîșț„\"]+", "", text or "").strip()
 
 SPAM_PATTERNS = [
     r"https?://", r"\bwww\.", r"\bwa\.me\b", r"\bt\.me\b", r"\bbit\.ly\b",
-    r"(?:\+?\d[\d\s().-]{8,}\d)",  # numere de telefon
-    r"whats\s?app", r"telegram", r"\bsignal\b", r"\bdm\b", r"inbox me", r"scrie-?mi (?:în|in) privat",
+    # numere de telefon (RO 07xx xxx xxx sau internaționale cu +), nu sume de bani ca „1.234.567 lei”
+    r"(?<![\d.,])(?:\+\d{1,3}[\s.-]?\(?\d{2,4}\)?(?:[\s.-]?\d{2,4}){2,4}|07\d{2}[\s.-]?\d{3}[\s.-]?\d{3})(?![\d.,]*\s*(?:lei|ron|euro|eur|usd|\$|%))",
+    r"whats\s?app", r"telegram", r"\bsignal group\b", r"\bdm me\b", r"inbox me", r"scrie-?mi (?:în|in) privat",
     r"contacteaz[ăa]-?m[ăa]", r"invest(?:ește|este|iți|iti) cu mine", r"profit garantat", r"c[âa][șs]tig garantat",
     r"randament garantat", r"guaranteed (?:profit|returns?)", r"forex (?:mentor|signals?|trader)",
     r"account manager", r"recovery (?:expert|agent)", r"recuper(?:ez|are) (?:banii|fonduri)", r"crypto (?:mentor|expert)",
-    r"bitcoin (?:mining|investment)", r"pump", r"airdrop", r"\bmentor\b.*\bprofit", r"lucr(?:ez|ați|ati) de acas[ăa]",
+    r"bitcoin (?:mining|investment)", r"pump (?:group|signal)", r"airdrop", r"\bmentor\b.*\bprofit", r"lucr(?:ez|ați|ati) de acas[ăa]",
 ]
 _SPAM_RX = [_re.compile(p, _re.I) for p in SPAM_PATTERNS]
 
 
+# linkuri către surse oficiale/financiare cunoscute nu sunt spam
+SAFE_LINK_RX = re.compile(r"https?://(?:www\.)?(?:[\w-]+\.)*(?:bvb\.ro|bnr\.ro|asfromania\.ro|insse\.ro|mfinante\.gov\.ro|"
+                          r"zf\.ro|profit\.ro|bursa\.ro|economica\.net|economedia\.ro|hotnews\.ro|digi24\.ro|"
+                          r"mediafax\.ro|reuters\.com|bloomberg\.com|ecb\.europa\.eu|federalreserve\.gov)\S*", re.I)
+
+
 def is_spam_comment(message: str) -> str | None:
+    message = SAFE_LINK_RX.sub(" ", message or "")
     for rx in _SPAM_RX:
-        m = rx.search(message or "")
+        m = rx.search(message)
         if m:
             return m.group(0)[:40]
     return None
@@ -275,7 +336,7 @@ def moderate_comments(page_token: str, graph_version: str, posted: list[str], lo
     me = requests.get(f"{g}/me", params={"fields": "id", "access_token": page_token}, timeout=20).json()
     page_id = me.get("id")
     feed = requests.get(f"{g}/me/feed", params={
-        "fields": "id,comments.limit(100){id,message,from{id,name},is_hidden}",
+        "fields": "id,comments.filter(stream).limit(200){id,message,from{id,name},is_hidden}",
         "since": int(time.time() - 7 * 86400), "limit": 50, "access_token": page_token}, timeout=30).json()
     if "error" in feed:
         raise RuntimeError(feed["error"].get("message", feed["error"]))
@@ -349,7 +410,7 @@ def run(posted: list[str], publish, ask_gemini_text, violates, page_token: str, 
                     posted.append(f"x:report:{today}")
                 continue
             text = {"bnr": bnr_post, "bvb": bvb_post}.get(task)
-            text = text() if text else weekly_post(ask_gemini_text)
+            text = text() if text else weekly_post(ask_gemini_text, page_token, graph_version)
             bad = violates(text)
             if bad:
                 log(f"[{task}] text cu formulări de tip recomandare ({', '.join(bad)}); nu public.")

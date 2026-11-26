@@ -48,3 +48,15 @@ Fiecare subiect primește un scor 0–100, cu motivele afișate în log:
 - **penalizări:** conținut lipsă sau scurt, fiscalitate locală fără impact bursier; plafon de 65 dacă știrea nu are instrument, emitent sau autoritate financiară.
 
 Niveluri: **CRITIC ≥ 80**, **RIDICAT ≥ 60**, MODERAT. Se publică doar subiectele cu scor ≥ `MIN_SCORE` (implicit 60). Nu se publică două postări la rând din aceeași categorie.
+
+
+## Garanții de calitate (actualizat 26.11.2026)
+
+- **Exactitate:** fiecare cifră din postare trebuie să apară în textul sursei; altfel postarea e rescrisă o dată, apoi respinsă.
+- **Știri respinse:** o știre care nu trece verificările e marcată și nu mai e încercată; botul trece la următoarea.
+- **Fără repostări:** un subiect publicat în ultimele 48h nu se mai publică, chiar dacă apare reformulat în altă sursă.
+- **Emitent doar pomenit:** dacă o companie listată apare în titlu fără eveniment financiar, scorul rămâne sub prag.
+- **Ora României reală** (cu ora de vară) pentru intervalul de publicare și postările programate.
+- **Recapitularea și raportul** exclud postările șterse de pe Pagină.
+- **Moderare:** ascunde spam (telefoane, WhatsApp/Telegram, „profit garantat” etc.); sumele de bani și linkurile către surse oficiale nu sunt considerate spam; verifică și răspunsurile la comentarii.
+- **Istoric sigur:** salvarea posted.json reîncearcă dacă repo-ul s-a modificat între timp.
