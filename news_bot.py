@@ -209,7 +209,10 @@ Reguli:
 - conținut STRICT informativ: NU face recomandări de investiții (cumpărare/vânzare/păstrare), NU folosi imperative
   adresate cititorului, NU da prețuri-țintă și NU face predicții de preț; fără formulări promoționale sau evaluative
   („atractiv”, „oportunitate”, „potențial de randament”, „subliniază atractivitatea”); maximum 3 hashtag-uri;
-- maximum 600 de caractere; folosește DOAR informațiile de mai jos, nu inventa cifre.
+- maximum 600 de caractere;
+- EXACTITATE: folosește EXCLUSIV faptele din textele de mai jos. Nu adăuga cifre, date, nume, procente,
+  cauze sau context pe care nu le găsești acolo (nici din ce știi tu). Păstrează cifrele exact cum apar în sursă
+  (fără rotunjiri sau conversii). Dacă sursa nu spune de ce contează știrea, nu inventa o explicație.
 
 Răspunde STRICT în JSON: {{"text": "<postarea>"}}
 
@@ -218,8 +221,15 @@ Răspunde STRICT în JSON: {{"text": "<postarea>"}}
 """
 
 
-def ask_gemini(item: dict, strict: bool = False) -> str:
-    listing = "\n".join(f"- [{m['source']}] {m['title']} — {m['summary']}" for m in item.get("members", [item])[:5])
+def source_text(item: dict) -> str:
+    return "\n".join(f"- [{m['source']}] {m['title']} — {m['summary']}" for m in item.get("members", [item])[:5])
+
+
+def ask_gemini(item: dict, strict: bool = False, fix_numbers: list[str] | None = None) -> str:
+    listing = source_text(item)
+    if fix_numbers:
+        listing += ("\n\nATENȚIE: varianta anterioară conținea cifre care NU apar în sursă ("
+                    + ", ".join(fix_numbers) + "). Folosește numai cifrele scrise exact în textele de mai sus.")
     if strict:
         listing += ("\n\nATENȚIE: varianta anterioară conținea formulări care pot fi citite ca recomandare de investiții. "
                     "Scrie strict informativ: fapte și cifre, fără verbe la imperativ, fără „oportunitate”, „potențial”, "
@@ -227,7 +237,7 @@ def ask_gemini(item: dict, strict: bool = False) -> str:
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
     body = {
         "contents": [{"parts": [{"text": PROMPT.format(items=listing)}]}],
-        "generationConfig": {"temperature": 0.4, "responseMimeType": "application/json"},
+        "generationConfig": {"temperature": 0.1, "responseMimeType": "application/json"},
     }
     resp = None
     for attempt in range(3):  # Gemini mai are întârzieri ocazionale
@@ -283,6 +293,37 @@ def gemini_text(prompt: str) -> str:
                 raise
             time.sleep(10 * (attempt + 1))
     return ""
+
+
+_NUM_RE = re.compile(r"\d+(?:[.,]\d+)*")
+
+
+def _canon(num: str) -> str:
+    """3,9 / 3.9 / 3.90 -> 3.9 ; 1.500 / 1,500 -> 1500 (separator de mii)."""
+    parts = re.split(r"[.,]", num)
+    if len(parts) > 1 and all(len(p) == 3 for p in parts[1:]):
+        return "".join(parts)
+    if len(parts) > 2:
+        return "".join(parts)
+    n = parts[0].lstrip("0") or "0"
+    if len(parts) == 2:
+        dec = parts[1].rstrip("0")
+        return f"{n}.{dec}" if dec else n
+    return n
+
+
+def unverified_numbers(post: str, source: str) -> list[str]:
+    """Cifrele din postare care nu apar în textul sursă (exceptând numerele mici, ex. „10 luni”)."""
+    src = {_canon(x) for x in _NUM_RE.findall(source)}
+    bad = []
+    for m in _NUM_RE.finditer(post):
+        raw, c = m.group(0), _canon(m.group(0))
+        pct = post[m.end():m.end() + 2].lstrip().startswith("%")
+        if c in src or (c.isdigit() and int(c) <= 12 and not pct):
+            continue
+        if raw not in bad:
+            bad.append(raw)
+    return bad
 
 
 def violates_no_advice(text: str) -> list[str]:
@@ -417,6 +458,15 @@ def main() -> int:
                     bad = violates_no_advice(text)
                 if bad:
                     log(f"Tot conține formulări de tip recomandare ({', '.join(bad)}); NU public.")
+                    return 0
+                src = source_text(p)
+                wrong = unverified_numbers(text, src)
+                if wrong:
+                    log(f"Cifre care nu apar în sursă ({', '.join(wrong)}); regenerez.")
+                    text = ask_gemini(p, fix_numbers=wrong)
+                    wrong = unverified_numbers(text, src) or violates_no_advice(text)
+                if wrong:
+                    log(f"Textul tot nu se potrivește cu sursa ({', '.join(wrong)}); NU public.")
                     return 0
             except Exception as exc:
                 log(f"Gemini a eșuat ({exc}); nu public nimic la această rulare.")
