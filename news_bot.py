@@ -204,7 +204,8 @@ Reguli:
 - primul rând: un titlu scurt, cu un emoji potrivit (📈 📉 🏦 💶 🛢️ 🌍);
 - 2–4 propoziții de rezumat, factuale, cu cifrele din știre, scrise cu cuvintele tale (nu copia textul sursei);
 - dacă e relevant, o propoziție despre de ce contează pentru un investitor român (BVB, EUR/RON, dobânzi) – fără speculații;
-- fără recomandări de cumpărare/vânzare, fără predicții de preț, fără formulări promoționale sau evaluative
+- conținut STRICT informativ: NU face recomandări de investiții (cumpărare/vânzare/păstrare), NU folosi imperative
+  adresate cititorului, NU da prețuri-țintă și NU face predicții de preț; fără formulări promoționale sau evaluative
   („atractiv”, „oportunitate”, „potențial de randament”, „subliniază atractivitatea”); maximum 3 hashtag-uri;
 - maximum 600 de caractere; folosește DOAR informațiile de mai jos, nu inventa cifre.
 
@@ -215,8 +216,12 @@ Răspunde STRICT în JSON: {{"text": "<postarea>"}}
 """
 
 
-def ask_gemini(item: dict) -> str:
+def ask_gemini(item: dict, strict: bool = False) -> str:
     listing = "\n".join(f"- [{m['source']}] {m['title']} — {m['summary']}" for m in item.get("members", [item])[:5])
+    if strict:
+        listing += ("\n\nATENȚIE: varianta anterioară conținea formulări care pot fi citite ca recomandare de investiții. "
+                    "Scrie strict informativ: fapte și cifre, fără verbe la imperativ, fără „oportunitate”, „potențial”, "
+                    "„atractiv”, „merită”, „buy/sell”, fără prețuri-țintă și fără aprecieri despre evoluția viitoare a prețului.")
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
     body = {
         "contents": [{"parts": [{"text": PROMPT.format(items=listing)}]}],
@@ -244,6 +249,24 @@ def ask_gemini(item: dict) -> str:
     if not text:
         raise ValueError("Gemini a întors un text gol")
     return text
+
+
+# Formulări care pot transforma o postare informativă într-o recomandare de investiții.
+FORBIDDEN_IN_POST = [
+    "cumpărați", "cumparati", "cumpără acum", "cumpara acum", "vindeți", "vindeti", "vinde acum",
+    "recomand", "recomandăm", "recomandam", "merită cumpărat", "merita cumparat", "merită investit",
+    "oportunitate", "ocazie de cumpărare", "ocazie de cumparare", "potențial de creștere", "potential de crestere",
+    "potențial de randament", "potential de randament", "preț țintă", "pret tinta", "țintă de preț",
+    "investiți", "investiti", "să investești", "sa investesti", "de cumpărat", "de cumparat", "atractiv",
+    "subevaluat", "supraevaluat", "intrați", "intrati", "poziționați-vă", "pozitionati-va", "buy", "sell",
+]
+
+
+def violates_no_advice(text: str) -> list[str]:
+    low = text.lower()
+    whole = {"buy", "sell", "investiți", "investiti", "intrați", "intrati"}  # doar ca cuvânt întreg (nu „buyback”)
+    return [w for w in FORBIDDEN_IN_POST
+            if re.search(rf"(?<![\w]){re.escape(w)}" + (r"(?![\w])" if w in whole else ""), low)]
 
 
 def fallback_text(it: dict) -> str:
@@ -350,6 +373,14 @@ def main() -> int:
         if GEMINI_KEY:
             try:
                 text = ask_gemini(p)
+                bad = violates_no_advice(text)
+                if bad:
+                    log(f"Textul conține formulări de tip recomandare ({', '.join(bad)}); îl regenerez.")
+                    text = ask_gemini(p, strict=True)
+                    bad = violates_no_advice(text)
+                if bad:
+                    log(f"Tot conține formulări de tip recomandare ({', '.join(bad)}); NU public.")
+                    return 0
             except Exception as exc:
                 log(f"Gemini a eșuat ({exc}); nu public nimic la această rulare.")
                 return 1

@@ -161,6 +161,23 @@ def is_strictly_financial(text: str, source_tier: str, has_tickers: bool) -> boo
     return any_prefix(text, FIN_STEMS)
 
 
+# Știri care sunt ele însele recomandări (ratinguri de analist, prețuri-țintă, „acțiuni de cumpărat”).
+# Nu le publicăm: ar însemna redistribuirea unor recomandări de investiții.
+RECOMMENDATION = [
+    "price target", "target price", "preț țintă", "pret tinta", "prețul țintă", "pretul tinta", "țintă de preț",
+    "tinta de pret", "upgrade to buy", "upgraded to buy", "downgrade to sell", "downgraded to sell",
+    "buy rating", "sell rating", "hold rating", "overweight", "underweight", "outperform", "underperform",
+    "strong buy", "stocks to buy", "stock to buy", "should you buy", "top picks", "top pick", "buy the dip",
+    "recomandare de cumpărare", "recomandare de cumparare", "recomandare de vânzare", "recomandare de vanzare",
+    "recomandă cumpărarea", "recomanda cumpararea", "acțiuni de cumpărat", "actiuni de cumparat",
+    "ce acțiuni să cumperi", "ce actiuni sa cumperi", "merită cumpărate", "merita cumparate",
+]
+
+
+def is_recommendation(text: str) -> bool:
+    return any(r in text for r in RECOMMENDATION)
+
+
 def is_promo(text: str) -> bool:
     return any(p in text for p in PROMO)
 
@@ -355,6 +372,8 @@ def score_item(it: dict, now: float | None = None) -> dict:
     region = determine_region(text, it.get("region", "ro"))
     base = {"category": category, "region": region, "tickers": tickers}
 
+    if is_recommendation(text):
+        return {**base, "score": 0, "level": "EXCLUS", "reasons": ["Recomandare de investiții (rating de analist / preț-țintă)"]}
     if is_promo(text):
         return {**base, "score": 0, "level": "EXCLUS", "reasons": ["Teaser promoțional/abonament"]}
     if not is_strictly_financial(text, tier, bool(tickers)):
