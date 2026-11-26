@@ -10,9 +10,13 @@ on:
       dry_run:
         description: "Test fără publicare (1 = da)"
         default: "1"
+      extras:
+        description: "Forțează postări programate (ex. bnr,bvb,weekly,report)"
+        default: ""
 
 permissions:
-  contents: write   # pentru a salva posted.json
+  contents: write   # pentru a salva posted.json și posts_log.json
+  issues: write     # pentru raportul săptămânal
 
 concurrency:
   group: news-bot
@@ -37,6 +41,8 @@ jobs:
           FB_PAGE_TOKEN: ${{ secrets.FB_PAGE_TOKEN }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           DRY_RUN: ${{ github.event.inputs.dry_run || '0' }}
+          EXTRAS_FORCE: ${{ github.event.inputs.extras || '' }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python news_bot.py
 
       - name: Salvează istoricul postărilor
@@ -44,5 +50,5 @@ jobs:
         run: |
           git config user.name "news-bot"
           git config user.email "news-bot@users.noreply.github.com"
-          git add posted.json 2>/dev/null || true
+          git add posted.json posts_log.json 2>/dev/null || true
           git diff --cached --quiet || (git commit -m "Actualizare istoric postări" && git push)
