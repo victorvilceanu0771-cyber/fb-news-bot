@@ -61,7 +61,7 @@ MIN_GAP_MIN = int(os.getenv("MIN_GAP_MIN", "30"))  # pauză minimă între post�
 URGENT_SCORE = int(os.getenv("URGENT_SCORE", "85"))
 ACTIVE_FROM, ACTIVE_TO = 7, 22  # publicăm doar între 07:00 și 22:00, ora României
 RO_TZ_OFFSET = 2  # ora României iarna (UTC+2); vara diferența e de 1h, fără efect important
-DRY_RUN = os.getenv("DRY_RUN", "0") == "1"
+DRY_RUN = os.getenv("DRY_RUN", "0").strip().lower() not in ("0", "", "false", "no", "nu")  # orice altă valoare = test
 STATE_KEEP = 2000  # câte linkuri publicate păstrăm în istoric
 UA = "Mozilla/5.0 (compatible; VVFinanteNewsBot/1.0)"
 

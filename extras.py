@@ -68,10 +68,19 @@ def append_log(entry: dict) -> None:
 
 def bnr_rates() -> tuple[str, dict, dict]:
     """Întoarce (data, cursuri_azi, cursuri_ziua_precedentă) din XML-ul BNR pe 10 zile."""
-    r = requests.get("https://www.bnr.ro/nbrfxrates10days.xml", headers=UA, timeout=20)
-    r.raise_for_status()
+    root, errors = None, []
+    for url in ("https://curs.bnr.ro/nbrfxrates10days.xml", "https://www.bnr.ro/nbrfxrates10days.xml",
+                "http://www.bnr.ro/nbrfxrates10days.xml"):
+        try:
+            r = requests.get(url, headers={**UA, "Accept": "application/xml,text/xml"}, timeout=20)
+            r.raise_for_status()
+            root = ET.fromstring(r.content.strip())
+            break
+        except Exception as exc:
+            errors.append(f"{url}: {str(exc)[:80]}")
+    if root is None:
+        raise RuntimeError("fluxul BNR nu răspunde: " + " | ".join(errors))
     ns = {"b": "http://www.bnr.ro/xsd"}
-    root = ET.fromstring(r.content)
     cubes = root.findall(".//b:Cube", ns)
     days = []
     for c in cubes:

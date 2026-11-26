@@ -171,6 +171,10 @@ RECOMMENDATION = [
     "recomandare de cumpărare", "recomandare de cumparare", "recomandare de vânzare", "recomandare de vanzare",
     "recomandă cumpărarea", "recomanda cumpararea", "acțiuni de cumpărat", "actiuni de cumparat",
     "ce acțiuni să cumperi", "ce actiuni sa cumperi", "merită cumpărate", "merita cumparate",
+    # previziuni de preț / de piață ale analiștilor (tot o formă de recomandare)
+    "rally to follow", "% rally", "will rally", "set to soar", "could soar", "could double", "could triple",
+    "should bottom", "bottom soon", "upside of", "% upside", "downside of", "% downside", "price forecast",
+    "prognoză de preț", "prognoza de pret", "ar putea crește cu", "ar putea creste cu",
 ]
 
 
