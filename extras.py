@@ -117,6 +117,7 @@ def bnr_post() -> str:
 
 # ------------------------------------------------------------------ închidere BVB
 
+BVB_CLOSE_ENABLED = False
 YAHOO_INDEX_CANDIDATES = ["^BETI", "^BET", "BET.RO"]
 BVB_STOCKS = {"TLV.RO": "Banca Transilvania", "H2O.RO": "Hidroelectrica", "SNP.RO": "OMV Petrom",
               "SNG.RO": "Romgaz", "BRD.RO": "BRD", "SNN.RO": "Nuclearelectrica", "TGN.RO": "Transgaz",
@@ -310,7 +311,9 @@ def due_tasks(posted: list[str]) -> list[str]:
     tasks = []
     if wd < 5 and 13 * 60 + 15 <= hm < 16 * 60 and f"x:bnr:{today}" not in posted:
         tasks.append("bnr")
-    if wd < 5 and 18 * 60 <= hm < 21 * 60 and f"x:bvb:{today}" not in posted:
+    # Închiderea BVB e DEZACTIVATĂ: cotațiile .RO din Yahoo Finance s-au dovedit greșite (26.11.2026).
+    # Se reactivează doar cu o sursă de date BVB verificată.
+    if BVB_CLOSE_ENABLED and wd < 5 and 18 * 60 <= hm < 21 * 60 and f"x:bvb:{today}" not in posted:
         tasks.append("bvb")
     if wd == 4 and 18 * 60 + 30 <= hm < 21 * 60 + 30 and f"x:weekly:{today}" not in posted:
         tasks.append("weekly")
