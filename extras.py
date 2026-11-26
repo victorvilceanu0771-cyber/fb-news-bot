@@ -244,6 +244,63 @@ def open_github_issue(title: str, body: str) -> None:
     r.raise_for_status()
 
 
+# ------------------------------------------------------------------ moderarea comentariilor
+
+import re as _re
+
+SPAM_PATTERNS = [
+    r"https?://", r"\bwww\.", r"\bwa\.me\b", r"\bt\.me\b", r"\bbit\.ly\b",
+    r"(?:\+?\d[\d\s().-]{8,}\d)",  # numere de telefon
+    r"whats\s?app", r"telegram", r"\bsignal\b", r"\bdm\b", r"inbox me", r"scrie-?mi (?:în|in) privat",
+    r"contacteaz[ăa]-?m[ăa]", r"invest(?:ește|este|iți|iti) cu mine", r"profit garantat", r"c[âa][șs]tig garantat",
+    r"randament garantat", r"guaranteed (?:profit|returns?)", r"forex (?:mentor|signals?|trader)",
+    r"account manager", r"recovery (?:expert|agent)", r"recuper(?:ez|are) (?:banii|fonduri)", r"crypto (?:mentor|expert)",
+    r"bitcoin (?:mining|investment)", r"pump", r"airdrop", r"\bmentor\b.*\bprofit", r"lucr(?:ez|ați|ati) de acas[ăa]",
+]
+_SPAM_RX = [_re.compile(p, _re.I) for p in SPAM_PATTERNS]
+
+
+def is_spam_comment(message: str) -> str | None:
+    for rx in _SPAM_RX:
+        m = rx.search(message or "")
+        if m:
+            return m.group(0)[:40]
+    return None
+
+
+def moderate_comments(page_token: str, graph_version: str, posted: list[str], log, dry_run: bool) -> int:
+    """Ascunde (nu șterge) comentariile de tip spam/înșelătorie de la postările din ultimele 7 zile."""
+    g = f"https://graph.facebook.com/{graph_version}"
+    me = requests.get(f"{g}/me", params={"fields": "id", "access_token": page_token}, timeout=20).json()
+    page_id = me.get("id")
+    feed = requests.get(f"{g}/me/feed", params={
+        "fields": "id,comments.limit(100){id,message,from{id,name},is_hidden}",
+        "since": int(time.time() - 7 * 86400), "limit": 50, "access_token": page_token}, timeout=30).json()
+    if "error" in feed:
+        raise RuntimeError(feed["error"].get("message", feed["error"]))
+    seen = {k[2:] for k in posted if k.startswith("h:")}
+    hidden = 0
+    for post in feed.get("data", []):
+        for c in post.get("comments", {}).get("data", []):
+            if c.get("is_hidden") or c["id"] in seen or (c.get("from") or {}).get("id") == page_id:
+                continue
+            reason = is_spam_comment(c.get("message", ""))
+            if not reason:
+                continue
+            who = (c.get("from") or {}).get("name", "?")
+            if dry_run:
+                log(f"[moderare] (test) aș ascunde comentariul lui {who}: „{c.get('message', '')[:80]}” – motiv: {reason}")
+                continue
+            r = requests.post(f"{g}/{c['id']}", data={"is_hidden": "true", "access_token": page_token}, timeout=20).json()
+            if r.get("success"):
+                hidden += 1
+                posted.append(f"h:{c['id']}")
+                log(f"[moderare] ascuns comentariul lui {who} – motiv: {reason}")
+            else:
+                log(f"[moderare] nu am putut ascunde {c['id']}: {r.get('error', r)}")
+    return hidden
+
+
 # ------------------------------------------------------------------ orchestrare
 
 def due_tasks(posted: list[str]) -> list[str]:
@@ -265,7 +322,12 @@ def due_tasks(posted: list[str]) -> list[str]:
 def run(posted: list[str], publish, ask_gemini_text, violates, page_token: str, graph_version: str,
         log, dry_run: bool, force: list[str] | None = None) -> None:
     """Execută sarcinile scadente. `publish(message, link)` publică pe Pagină și întoarce id-ul postării."""
-    tasks = force if force is not None else due_tasks(posted)
+    if page_token and (force is None or "moderate" in force):
+        try:
+            moderate_comments(page_token, graph_version, posted, log, dry_run)
+        except Exception as exc:
+            log(f"[moderare] indisponibilă: {str(exc)[:150]}")
+    tasks = [t for t in (force if force is not None else due_tasks(posted)) if t != "moderate"]
     for task in tasks:
         today = _today()
         try:
