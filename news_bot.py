@@ -57,7 +57,8 @@ MAX_AGE_HOURS = float(os.getenv("MAX_AGE_HOURS", "8"))
 MIN_SCORE = int(os.getenv("MIN_SCORE", "60"))  # prag de publicare (RIDICAT)
 MAX_PER_DAY = int(os.getenv("MAX_PER_DAY", "8"))  # maximum de postări pe zi
 MIN_GAP_MIN = int(os.getenv("MIN_GAP_MIN", "30"))  # pauză minimă între postări (minute)
-URGENT_SCORE = int(os.getenv("URGENT_SCORE", "85"))  # știrile de la acest scor pot sări peste pauză
+URGENT_SCORE = int(os.getenv("URGENT_SCORE", "85"))
+ACTIVE_FROM, ACTIVE_TO = 7, 22  # publicăm doar între 07:00 și 22:00, ora României
 RO_TZ_OFFSET = 2  # ora României iarna (UTC+2); vara diferența e de 1h, fără efect important
 DRY_RUN = os.getenv("DRY_RUN", "0") == "1"
 STATE_KEEP = 2000  # câte linkuri publicate păstrăm în istoric
@@ -339,6 +340,11 @@ def main() -> int:
 
     if PAGE_TOKEN:
         resolve_page_token()
+
+    hour_ro = time.gmtime(time.time() + RO_TZ_OFFSET * 3600).tm_hour
+    if not (ACTIVE_FROM <= hour_ro < ACTIVE_TO) and not DRY_RUN:
+        log(f"În afara intervalului de publicare ({ACTIVE_FROM}:00–{ACTIVE_TO}:00, ora României). Ies.")
+        return 0
 
     feeds = json.loads(FEEDS_FILE.read_text(encoding="utf-8"))
     posted = load_state()
