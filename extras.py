@@ -281,13 +281,17 @@ def moderate_comments(page_token: str, graph_version: str, posted: list[str], lo
         raise RuntimeError(feed["error"].get("message", feed["error"]))
     seen = {k[2:] for k in posted if k.startswith("h:")}
     hidden = 0
-    for post in feed.get("data", []):
+    checked = suspects = 0
+    posts = feed.get("data", [])
+    for post in posts:
         for c in post.get("comments", {}).get("data", []):
+            checked += 1
             if c.get("is_hidden") or c["id"] in seen or (c.get("from") or {}).get("id") == page_id:
                 continue
             reason = is_spam_comment(c.get("message", ""))
             if not reason:
                 continue
+            suspects += 1
             who = (c.get("from") or {}).get("name", "?")
             if dry_run:
                 log(f"[moderare] (test) aș ascunde comentariul lui {who}: „{c.get('message', '')[:80]}” – motiv: {reason}")
@@ -299,6 +303,7 @@ def moderate_comments(page_token: str, graph_version: str, posted: list[str], lo
                 log(f"[moderare] ascuns comentariul lui {who} – motiv: {reason}")
             else:
                 log(f"[moderare] nu am putut ascunde {c['id']}: {r.get('error', r)}")
+    log(f"[moderare] OK: {len(posts)} postări, {checked} comentarii verificate, {suspects} suspecte, {hidden} ascunse.")
     return hidden
 
 
