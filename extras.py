@@ -198,17 +198,47 @@ def post_exists(post_id: str, page_token: str, graph_version: str) -> bool | Non
     return False if code in (100, 803) else None
 
 
+def visible_post_ids(page_token: str, graph_version: str, days: int = 8) -> set[str] | None:
+    """ID-urile postărilor vizibile acum pe Pagină. Postările mutate în coș nu apar aici
+    (deși API-ul le mai întoarce dacă sunt cerute direct după ID). None = nu s-a putut verifica."""
+    if not page_token:
+        return None
+    url = f"https://graph.facebook.com/{graph_version}/me/published_posts"
+    params = {"fields": "id", "limit": 100, "since": int(time.time() - days * 86400), "access_token": page_token}
+    ids: set[str] = set()
+    try:
+        for _ in range(5):
+            d = requests.get(url, params=params, timeout=30).json()
+            if "error" in d:
+                return None
+            ids |= {x["id"] for x in d.get("data", [])}
+            nxt = (d.get("paging") or {}).get("next")
+            if not nxt:
+                break
+            url, params = nxt, {}
+    except Exception:
+        return None
+    return ids
+
+
+def is_live(e: dict, visible: set[str] | None, page_token: str, graph_version: str) -> bool:
+    if visible is not None:
+        return e.get("post_id") in visible
+    return post_exists(e.get("post_id", ""), page_token, graph_version) is not False
+
+
 def live_news(page_token: str, graph_version: str, days: int = 7) -> list[dict]:
-    """Știrile publicate în ultimele `days` zile care mai există pe Pagină (cele șterse sunt excluse)."""
+    """Știrile publicate în ultimele `days` zile care sunt încă vizibile pe Pagină."""
     since = time.time() - days * 86400
-    out = []
-    for e in load_log():
-        if e.get("ts", 0) < since or e.get("kind", "news") != "news":
-            continue
-        if post_exists(e.get("post_id", ""), page_token, graph_version) is False:
-            continue
-        out.append(e)
-    return out
+    visible = visible_post_ids(page_token, graph_version)
+    return [e for e in load_log()
+            if e.get("ts", 0) >= since and e.get("kind", "news") == "news"
+            and is_live(e, visible, page_token, graph_version)]
+
+
+def _short(text: str, n: int = 140) -> str:
+    text = re.sub(r"\s+", " ", text or "").strip()
+    return text if len(text) <= n else text[:n].rsplit(" ", 1)[0] + "…"
 
 
 def weekly_post(ask_gemini_text, page_token: str = "", graph_version: str = "v24.0") -> str:
@@ -219,7 +249,7 @@ def weekly_post(ask_gemini_text, page_token: str = "", graph_version: str = "v24
     items.sort(key=lambda e: e.get("score", 0), reverse=True)
     top = items[:6]
     # titlul în română al postării noastre (dacă există), altfel titlul sursei
-    heads = [_re_emoji(e.get("headline") or e["title"]) for e in top]
+    heads = [_short(_re_emoji(e.get("headline") or e["title"])) for e in top]
     listing = "\n".join(f"- [{e.get('category')}] {h}" for e, h in zip(top, heads))
     intro = ask_gemini_text(
         "Scrie 2 propoziții în română care rezumă, factual și neutru, tema principală a săptămânii pe piețele "
@@ -249,8 +279,9 @@ def performance_report(page_token: str, graph_version: str) -> str:
     week_ago = time.time() - 7 * 86400
     items = [e for e in load_log() if e.get("ts", 0) >= week_ago and e.get("post_id")]
     rows, by_cat, deleted = [], {}, 0
+    visible = visible_post_ids(page_token, graph_version)
     for e in items:
-        if post_exists(e["post_id"], page_token, graph_version) is False:
+        if not is_live(e, visible, page_token, graph_version):
             deleted += 1
             continue
         try:
