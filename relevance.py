@@ -344,6 +344,21 @@ TOP_ROLES = ["ceo", "director general", "director executiv", "președinte", "pre
              "chairman", "cfo", "ministru", "ministrul"]
 LOCAL_FISCAL = ["jocuri de noroc", "păcănele", "pacanele", "taxe locale", "impozit pe clădiri",
                 "impozit pe cladiri", "taxa de salubritate", "amenzi", "taxa auto"]
+# semnale că știrea are impact financiar pentru emitent (nu doar că îl pomenește)
+MATERIAL_STEMS = ["acțiun", "actiun", "cotați", "cotati", "bursă", "bursa", "profit", "pierder", "venitur",
+                  "investiț", "investit", "tarif", "licitați", "licitati", "insolvenț", "insolvent", "amend",
+                  "sancțiun", "sanctiun", "capital", "datori", "credit", "împrumut", "imprumut", "finanțar",
+                  "finantar", "ebitda", "marj", "afaceri", "share", "stock", "price", "deal", "fine", "lawsuit",
+                  "proces", "litig", "rating", "prognoz", "estimar", "bugetul de investiți", "capex"]
+# subiecte fără legătură cu piața (cultură, CSR, evenimente)
+NON_MARKET = ["muzeu", "muzeul", "expoziți", "expoziti", "festival", "concert", "sponsoriz", "donați", "donati",
+              "aniversar", "gală", "gala", "premiul", "premiu", "campanie socială", "campanie sociala",
+              "voluntar", "patrimoniu cultural", "trece în administrarea", "trece in administrarea",
+              "institutul", "museum", "exhibition", "charity", "donation"]
+# „Nume Prenume, funcție la X: citat” – declarație/interviu, nu știre despre companie
+QUOTE_RE = re.compile(r"^[A-ZĂÂÎȘŞȚŢ][\w\-]+(?: [A-ZĂÂÎȘŞȚŢ][\w\-]+){1,2}, [^:]{3,90}:\s")
+MACRO_DATA = ["deficit", "inflați", "inflati", "pib", "șomaj", "somaj", "dobând", "dobanda", "datoria public",
+              "cpi", "gdp", "unemployment", "payrolls", "balanța comercial", "balanta comercial"]
 FIGURES_RE = re.compile(r"\b\d+([.,]\d+)?\s*(%|mld|miliard|milioane|mil\.|euro|lei|ron|usd|\$|€|bps|puncte|"
                         r"billion|million|bn|pct)", re.I)
 
@@ -385,8 +400,25 @@ def score_item(it: dict, now: float | None = None) -> dict:
 
     score, reasons = src_pts, [f"{src_reason} ({dom}) +{src_pts}"]
 
+    is_quote = bool(QUOTE_RE.match(title.strip()))
+    non_market = any_prefix(title_n, NON_MARKET)
+    material = any_prefix(text, STRUCTURAL_STEMS) or any_prefix(text, MATERIAL_STEMS) \
+        or bool(FIGURES_RE.search(title)) \
+        or (any_word(title_n, PERSONNEL) and any_word(title_n, TOP_ROLES))
+    weak_ticker = bool(tickers_title) and (is_quote or non_market or not material)
+    if weak_ticker and category in ("bvb", "equity", "tech"):
+        cat2 = determine_category(re.sub("|".join(re.escape(n) for t in tickers_title
+                                                    for n in TICKERS.get(t, [])), " ", text, flags=re.I))
+        category = cat2 if cat2 not in ("bvb", "equity", "tech") else "general"
+        base["category"] = category
+
     # emitenți listați + eveniment corporativ
-    if tickers and not tickers_title:
+    if weak_ticker:
+        score += 6
+        why = ("declarație/interviu" if is_quote else "subiect fără legătură cu piața" if non_market
+               else "fără eveniment cu impact financiar")
+        reasons.append(f"Emitent în titlu, dar {why}: {', '.join(tickers_title[:3])} +6")
+    elif tickers and not tickers_title:
         # emitent pomenit doar în corpul știrii (ex. „venituri din Google”) – nu e subiectul știrii
         score += 6
         reasons.append(f"Emitent menționat doar în text: {', '.join(tickers[:3])} +6")
@@ -467,6 +499,17 @@ def score_item(it: dict, now: float | None = None) -> dict:
         score -= 15
         reasons.append("Numire de personal (nu în funcție de top) -15")
 
+    if category == "macro" and FIGURES_RE.search(title) and any_prefix(title_n, MACRO_DATA):
+        score += 8
+        reasons.append("Dată macro oficială cu cifră în titlu +8")
+
+    if is_quote:
+        score -= 10
+        reasons.append("Declarație / interviu, nu fapt nou -10")
+    if non_market:
+        score -= 20
+        reasons.append("Subiect fără legătură cu piața (cultură, CSR, evenimente) -20")
+
     if any(o in title_n for o in OPINION):
         score -= 15
         reasons.append("Opinie / comentariu / rezumat de sesiune, nu știre -15")
@@ -486,7 +529,11 @@ def score_item(it: dict, now: float | None = None) -> dict:
         final = 65
         reasons.append("Plafonat la 65 (fără instrument, emitent sau autoritate)")
 
-    if category == "general" and not tickers_title and tier != "official" and final > 55:
+    if weak_ticker and final > 58:
+        final = 58
+        reasons.append("Plafonat la 58 (emitentul e doar pomenit; sub pragul de publicare)")
+
+    if category == "general" and (not tickers_title or weak_ticker) and tier != "official" and final > 55:
         final = 55
         reasons.append("Plafonat la 55 (subiect fără categorie de piață și fără emitent în titlu)")
 
