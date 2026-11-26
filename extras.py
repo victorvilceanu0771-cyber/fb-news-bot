@@ -80,18 +80,22 @@ def bnr_rates() -> tuple[str, dict, dict]:
             errors.append(f"{url}: {str(exc)[:80]}")
     if root is None:
         raise RuntimeError("fluxul BNR nu răspunde: " + " | ".join(errors))
-    ns = {"b": "http://www.bnr.ro/xsd"}
-    cubes = root.findall(".//b:Cube", ns)
     days = []
-    for c in cubes:
+    for c in root.iter():
+        if not c.tag.endswith("Cube"):
+            continue
         rates = {}
-        for rate in c.findall("b:Rate", ns):
-            mult = float(rate.get("multiplier", "1"))
-            rates[rate.get("currency")] = float(rate.text) / mult
-        days.append((c.get("date"), rates))
-    days.sort(key=lambda d: d[0])
-    if len(days) < 2:
-        raise RuntimeError("XML BNR incomplet")
+        for rate in c:
+            if rate.tag.endswith("Rate") and rate.text:
+                mult = float(rate.get("multiplier", "1") or 1)
+                rates[rate.get("currency")] = float(rate.text) / mult
+        if rates:
+            days.append((c.get("date"), rates))
+    days.sort(key=lambda d: d[0] or "")
+    if not days:
+        raise RuntimeError("XML BNR fără cursuri")
+    if len(days) == 1:
+        return days[0][0], days[0][1], {}
     return days[-1][0], days[-1][1], days[-2][1]
 
 
@@ -102,9 +106,11 @@ def bnr_post() -> str:
     lines = [f"💶 Cursul BNR pentru {time.strftime('%d.%m.%Y', time.strptime(date, '%Y-%m-%d'))}", ""]
     for cur, flag in (("EUR", "🇪🇺"), ("USD", "🇺🇸"), ("GBP", "🇬🇧"), ("CHF", "🇨🇭")):
         if cur in now:
-            lines.append(f"{flag} 1 {cur} = {_fmt_ro(now[cur])} lei  ({_pct(now[cur], prev.get(cur, 0))} față de ziua precedentă)")
+            ch = _pct(now[cur], prev.get(cur, 0))
+            lines.append(f"{flag} 1 {cur} = {_fmt_ro(now[cur])} lei" + (f"  ({ch} față de ziua precedentă)" if ch else ""))
     if "XAU" in now:
-        lines.append(f"🥇 1 g aur = {_fmt_ro(now['XAU'], 2)} lei  ({_pct(now['XAU'], prev.get('XAU', 0))})")
+        ch = _pct(now["XAU"], prev.get("XAU", 0))
+        lines.append(f"🥇 1 g aur = {_fmt_ro(now['XAU'], 2)} lei" + (f"  ({ch})" if ch else ""))
     lines += ["", "Sursa: Banca Națională a României", "#CursBNR #EURRON #Leu"]
     return "\n".join(lines)
 
